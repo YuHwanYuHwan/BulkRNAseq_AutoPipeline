@@ -114,7 +114,9 @@ BulkRNAseq_AutoPipeline/
 ├── rawData/                                # ← YOU put data here
 │   ├── ProjectA/
 │   │   ├── GroupA/
+│   │   │   ├── accessions.txt              # ← YOU write this for public data: SRR/ERR/DRR
 │   │   │   ├── group.conf                  # ← YOU write this: species, kit, strandedness
+│   │   │   ├── metadata.tsv                # fetched from GEO / BioSample after download
 │   │   │   ├── Control_1_1.fastq.gz        # flat file: filename = sample name
 │   │   │   ├── Control_1_2.fastq.gz
 │   │   │   ├── Treated_1_1.fastq.gz
@@ -332,16 +334,21 @@ treated samples belong in the same group; an unrelated experiment gets its own g
 
 ### Option A. Public data (GEO/SRA)
 
-All you need are run accessions.
+Make the group folder, put the accessions in a file called `accessions.txt` inside it, and hand
+that file to the download script. Keeping the list next to the data is the point: a year later
+the folder still says which runs it was built from.
 
 ```bash
-bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA SRR0000001 SRR0000002
-```
+G=rawData/ProjectA/GroupA
+mkdir -p $G
 
-If there are many, pass a file instead.
+cat > $G/accessions.txt <<'EOF'
+SRR0000001
+SRR0000002
+SRR0000003
+EOF
 
-```bash
-bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA srr_list.txt
+bash Scripts/PublicData_download.sh $G $G/accessions.txt
 ```
 
 **The file has no format.** Every `SRR`/`ERR`/`DRR` accession found anywhere in it is used and
@@ -353,7 +360,19 @@ SRR0000002                                                  SRR0000001,RNA-Seq,3
 SRR0000003                                                  SRR0000002,RNA-Seq,1474362300
 ```
 
-The last one is a run table saved straight from SRA Run Selector — nothing to clean up first.
+The last one is a run table saved straight from SRA Run Selector — save it as
+`$G/accessions.txt` and run, nothing to clean up first. For a consecutive range there is no
+need to type them out:
+
+```bash
+seq 38207576 38207593 | sed 's/^/SRR/' > $G/accessions.txt
+```
+
+A handful of runs needs no file at all:
+
+```bash
+bash Scripts/PublicData_download.sh $G SRR0000001 SRR0000002
+```
 
 The script downloads the FASTQ files, compresses them, **groups runs into a subfolder when
 several belong to one sample**, and then collects the sample metadata.
