@@ -70,7 +70,9 @@ else
       sed -i 's/^strandedness.*/strandedness = no/'      ${CONF}
       sed -i 's/^strandedness.*/strandedness = yes/'     ${CONF}
 
-  Then run: bash Scripts/run_stage2.sh ${GROUP_DIR}
+  Then run the pipeline again - finished steps are skipped:
+
+      bash Scripts/run_pipeline.sh ${GROUP_DIR}
 MSG
-    exit 2        # run_all.sh stops here; a plain stage-1 run just ends
+    exit 2        # run_pipeline.sh stops here
 fi

@@ -87,5 +87,5 @@ cat <<MSG
          species      = Homo_sapiens     # must match a folder in reference_Genomes/
          strandedness =                  # leave empty, stage 1 tells you what to put here
 
-  3. bash Scripts/run_stage1.sh ${GROUP_DIR}
+  3. bash Scripts/run_pipeline.sh ${GROUP_DIR}
 MSG

@@ -29,9 +29,9 @@ The green box is what this pipeline hands you. Everything after it is your analy
 2. [Installation](#2-installation)
 3. [Adding your data](#3-adding-your-data)
 4. [Writing group.conf](#4-writing-groupconf)
-5. [Running stage 1](#5-running-stage-1)
+5. [Running the pipeline](#5-running-the-pipeline)
 6. [Strandedness — measured, and yours to settle when it is close](#6-strandedness--measured-and-yours-to-settle-when-it-is-close)
-7. [Running stage 2](#7-running-stage-2)
+7. [Counting and normalization](#7-counting-and-normalization)
 8. [Reading the results](#8-reading-the-results)
 9. [Common errors](#9-common-errors)
 10. [Design rules](#10-design-rules)
@@ -159,8 +159,7 @@ BulkRNAseq_AutoPipeline/
     ├── PublicData_download.sh              # SRR accessions -> FASTQ in a group folder
     ├── list_samples.sh                     # print what the pipeline sees in a group
     │
-    ├── run_all.sh                          # wrapper: both stages, stopping only if unsure
-    ├── run_stage1.sh                       # wrapper: the four steps below
+    ├── run_pipeline.sh                     # wrapper: every step below, in order
     ├── FastQC.sh                           #   1. read quality
     ├── Trimming.sh                         #   2. adapter removal
     ├── AdapterSequenceList.csv             #      adapter sequences per library prep kit
@@ -168,7 +167,6 @@ BulkRNAseq_AutoPipeline/
     ├── Alignment.sh                        #   3b. alignment
     ├── probe_strandedness.sh               #   4. one sample counted, for you to judge
     │
-    ├── run_stage2.sh                       # wrapper: the three steps below
     ├── ReadCount.sh                        #   5. HTSeq counts -> count matrix
     ├── CalcCPM.sh / CalcCPM.R              #   6. TMM/CPM normalization
     ├── MultiQC.sh                          #   7. QC report + pipeline report
@@ -425,7 +423,7 @@ CONF
 |---|---|---|
 | `species` | yes | Must match a folder name under `reference_Genomes/` exactly |
 | `adapter_kit` | no | Library prep kit. Defaults to `Illumina_universal`. See `Scripts/AdapterSequenceList.csv` |
-| `strandedness` | later | **Leave it empty at first.** You fill it in after stage 1 (section 6) |
+| `strandedness` | usually not | **Leave it empty.** The probe fills it in, and only asks you when the result is borderline (section 6) |
 
 Spaces around `=`, quotes, and `#` comments are all accepted.
 
@@ -442,23 +440,23 @@ person supplies it.
 
 ---
 
-## 5. Running stage 1
+## 5. Running the pipeline
 
 ```bash
-bash Scripts/run_stage1.sh rawData/ProjectA/GroupA
+bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA
 ```
 
-This runs FastQC, cutadapt, STAR, and the strandedness probe, in order. If the probe can
-call the strandedness it records it, so `run_all.sh` (section 7) carries straight on into
-stage 2 without asking.
+This runs every step in order: FastQC, cutadapt, STAR, the strandedness probe, HTSeq, CPM,
+and the QC report. The probe records an unambiguous strandedness itself, so the run carries
+straight on to counting without asking.
 
 **It takes a long time.** Depending on sample count and sequencing depth, STAR alone is roughly
 20 minutes to an hour per sample, and the first run adds index building (1–2 hours) in front of
 that. To keep it running after you disconnect:
 
 ```bash
-nohup bash Scripts/run_stage1.sh rawData/ProjectA/GroupA > logs/stage1.log 2>&1 &
-tail -f logs/stage1.log      # Ctrl+C stops watching, not the job
+nohup bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA > logs/run.log 2>&1 &
+tail -f logs/run.log      # Ctrl+C stops watching, not the job
 ```
 
 To stop a background run later, kill the whole process group — killing the wrapper alone
@@ -580,7 +578,7 @@ between those two is drawn deliberately wide.
 
 ### How to decide
 
-The last step of stage 1, `probe_strandedness.sh`, counts **a single sample** with
+`probe_strandedness.sh`, which runs right after alignment, counts **a single sample** with
 `-s reverse` and shows you the outcome.
 
 ```
@@ -636,29 +634,20 @@ that someone reads it themselves rather than that a matrix appears quickly.
 
 ---
 
-## 7. Running stage 2
+## 7. Counting and normalization
+
+Nothing to launch here — once the strandedness is settled the same run continues into HTSeq,
+the count matrix, CPM, and the QC report.
+
+**If the probe put the run on hold**, record the value and run the same command again. Every
+step skips what it already finished, so it resumes at counting rather than starting over:
 
 ```bash
-bash Scripts/run_stage2.sh rawData/ProjectA/GroupA
+sed -i 's/^strandedness.*/strandedness = no/' rawData/ProjectA/GroupA/group.conf
+bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA
 ```
 
-HTSeq, count matrix, CPM, then MultiQC and the report.
-
-### Or run the whole thing at once
-
-```bash
-bash Scripts/run_all.sh rawData/ProjectA/GroupA        # or sbatch
-```
-
-Both stages back to back — the normal case now that a clear-cut probe records itself. It stops
-between them only on the hold, and says what to do next:
-
-```
-[HOLD] strandedness needs your call - see above, then: bash Scripts/run_stage2.sh rawData/ProjectA/GroupA
-```
-
-If `strandedness` is still empty the run **refuses to start**, which beats burning hours on a
-wrong value.
+Counting refuses to start while the value is missing, which beats burning hours on a wrong one:
 
 ```
 [ERROR] group.conf strandedness must be no|yes|reverse (got 'empty')
@@ -687,7 +676,7 @@ wrong value.
 
 No `[WARN]` line is the point here. `[WARN] Control_1: __no_feature 68.3%` means the
 strandedness is wrong — fix `group.conf`, delete the `.done` markers under
-`Processed/.../HTseqCount_result/`, and run stage 2 again.
+`Processed/.../HTseqCount_result/`, and run the pipeline again.
 
 The gene count depends on the annotation, not on your data: every sample in a group is counted
 against the same GTF, so the matrix has the same number of rows whatever you sequenced. Ensembl
@@ -806,7 +795,7 @@ backup material — delete them when disk runs short.
 | `not under rawData/` | The group folder is not below `rawData/` | Use the form `rawData/<project>/<group>` |
 | `group.conf must define species` | `species` missing or misspelled | Match the `reference_Genomes/` folder name, including case |
 | `kit 'XXX' not in AdapterSequenceList.csv` | Unknown kit name | Add a row (section 11), or leave `adapter_kit` empty |
-| `strandedness must be no\|yes\|reverse` | Value never filled in after stage 1 | See section 6 |
+| `strandedness must be no\|yes\|reverse` | The probe held, and the value was never recorded | See section 6 |
 | `run Trimming.sh first` | A step was skipped | Run the steps in order |
 | `produced no valid BAM` | STAR died, usually out of memory | Check the log. Index building needs 32 GB or more of RAM |
 | `[WARN] __no_feature 68.3%` | Wrong strandedness | Correct the value, delete `Processed/*/HTseqCount_result/.*.done`, re-run |
@@ -884,31 +873,30 @@ a script.
 
 ## 13. Running on SLURM
 
-The stage wrappers are valid batch scripts as they are — the `#SBATCH` directives sit inside
+The wrapper is a valid batch script as they are — the `#SBATCH` directives sit inside
 them, so `sbatch` needs no extra arguments.
 
 ```bash
 cd ~/BulkRNAseq_AutoPipeline      # submit from the repository root
-sbatch Scripts/run_stage1.sh rawData/ProjectA/GroupA
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA
 squeue -u $USER
 ```
 
 > Submit from the repository root. The log path in the directives is relative
-> (`logs/stage1_%j.out`), so submitting from elsewhere leaves the job nowhere to write and it
+> (`logs/rnaseq_%j.out`), so submitting from elsewhere leaves the job nowhere to write and it
 > fails before running anything.
 
-What each stage reserves:
+What the wrapper reserves:
 
-| Stage | Cores | Memory | Why |
+| Script | Cores | Memory | Why |
 |---|---|---|---|
-| 1 | 32 | 96 GB | STAR alignment, and building an index if one is missing (that alone wants 32 GB+) |
-| 2 | 12 | 48 GB | one `htseq-count` per core, each holding its own copy of the annotation |
+| `run_pipeline.sh` | 32 | 96 GB | STAR needs a 30 GB index in memory, and building one wants 32 GB+ on its own |
 
 Override per submission when a dataset is unusually large or the queue is busy; the command
 line beats the directives in the file:
 
 ```bash
-sbatch --cpus-per-task=16 --mem=48G Scripts/run_stage1.sh rawData/ProjectA/GroupA
+sbatch --cpus-per-task=16 --mem=48G Scripts/run_pipeline.sh rawData/ProjectA/GroupA
 ```
 
 Stage 2 scales almost linearly: `htseq-count` is single-threaded and CPU-bound, measured at
@@ -918,15 +906,15 @@ more samples at once.
 **You do not also have to set `THREADS`.** The scripts read `SLURM_CPUS_PER_TASK`, so the
 tools use exactly what the job reserved — reserve less and they scale down with it.
 
-Logs land in `logs/stage1_<jobid>.out` and `logs/stage2_<jobid>.out`, timestamps included, so
+Logs land in `logs/rnaseq_<jobid>.out`, timestamps included, so
 `tail -f` shows which step is running and what the previous one cost.
 
 ```bash
-tail -f logs/stage1_*.out
+tail -f logs/rnaseq_*.out
 scancel <jobid>                   # SLURM kills the whole job, orphans and all
 ```
 
-**The two stages are deliberately not chained** with `--dependency`. Stage 1 ends at the
-strandedness probe, and that answer is yours to give (section 6); an automatic hand-off would
-run stage 2 before anyone read the result. Within a stage nothing needs chaining either — each
-wrapper is a single job running its steps in order, and `set -e` stops it at the first failure.
+**Steps are chained inside one job rather than across several.** Nothing needs `--dependency`:
+`run_pipeline.sh` is a single job running its steps in order, and `set -e` stops it at the
+first failure. The one place it can pause is the strandedness hold, and that ends the job —
+you record the value and submit again, which resumes rather than restarts.
