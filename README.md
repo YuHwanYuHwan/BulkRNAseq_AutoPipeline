@@ -378,10 +378,13 @@ bash Scripts/fetch_metadata.sh rawData/ProjectA/GroupA
 The result is `metadata.tsv`, one row per run, one column per attribute the submitter used:
 
 ```
-Run          Sample      Title                 SourceName        tissue            treatment
-SRR0000001   GSM0000001  Donor A, control      peripheral blood  peripheral blood  Transduced with SCR0
-SRR0000002   GSM0000002  Donor A, treated      peripheral blood  peripheral blood  Transduced with SCR(S2-S2)
+Run         Sample      Series     BioProject    BioSample     Title             tissue            treatment
+SRR0000001  GSM0000001  GSE000000  PRJNA0000000  SAMN00000001  Donor A, control  peripheral blood  Transduced with SCR0
+SRR0000002  GSM0000002  GSE000000  PRJNA0000000  SAMN00000002  Donor A, treated  peripheral blood  Transduced with SCR(S2-S2)
 ```
+
+The accession columns are there so a matrix you find a year later still says where it came
+from — series, project, and sample, next to the run that produced each column.
 
 **The title and the characteristics are both recorded on purpose.** They are two things the
 submitter typed, and in real datasets they sometimes disagree — a title saying one condition

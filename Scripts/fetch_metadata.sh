@@ -20,10 +20,11 @@ RUNINFO="${GROUP_DIR}/.runinfo.csv"
 OUT="${GROUP_DIR}/metadata.tsv"
 [ -s "$RUNINFO" ] || { echo "[ERROR] no $RUNINFO - run PublicData_download.sh first" >&2; exit 1; }
 
-# Run <TAB> SampleName <TAB> BioSample, straight out of runinfo
+# Run, SampleName, BioSample, BioProject - all of it already sits in runinfo
 RUNS=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) { if ($i=="Run") r=i; if ($i=="SampleName") s=i
-                                              if ($i=="BioSample") b=i }; next }
-                r { print $r "\t" $s "\t" $b }' "$RUNINFO")
+                                              if ($i=="BioSample") b=i; if ($i=="BioProject") p=i }
+                        next }
+                r { print $r "\t" $s "\t" $b "\t" $p }' "$RUNINFO")
 FIRST_SAMPLE=$(head -1 <<< "$RUNS" | cut -f2)
 
 RAW="${GROUP_DIR}/.geo_samples.txt"
@@ -57,7 +58,7 @@ fi
 [ -s "$RAW" ] || { echo "[ERROR] no metadata retrieved" >&2; exit 1; }
 
 # Wide table: one row per run, one column per characteristic key found anywhere in the set.
-awk -F'\t' -v raw="$RAW" '
+awk -F'\t' -v raw="$RAW" -v series="${SERIES:--}" '
     BEGIN {
         while ((getline line < raw) > 0) {
             if (line ~ /^\^SAMPLE/)                 { split(line,a," = "); s=a[2]; continue }
@@ -72,18 +73,19 @@ awk -F'\t' -v raw="$RAW" '
                 val[s,k]=v
             }
         }
-        printf "Run\tSample\tTitle\tSourceName"
+        printf "Run\tSample\tSeries\tBioProject\tBioSample\tTitle\tSourceName"
         for (j=1;j<=nk;j++) printf "\t%s", key[j]
         print ""
     }
     {
         s=$2
-        printf "%s\t%s\t%s\t%s", $1, s, (title[s]?title[s]:"-"), (src[s]?src[s]:"-")
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", $1, s, series, ($4?$4:"-"), ($3?$3:"-"),
+               (title[s]?title[s]:"-"), (src[s]?src[s]:"-")
         for (j=1;j<=nk;j++) printf "\t%s", ((s,key[j]) in val ? val[s,key[j]] : "-")
         print ""
     }' <<< "$RUNS" > "$OUT"
 
 rm -f "$RAW"
-echo "[DONE] $OUT   ($(( $(wc -l < "$OUT") - 1 )) runs, $(head -1 "$OUT" | awk -F'\t' '{print NF-4}') attributes)"
+echo "[DONE] $OUT   ($(( $(wc -l < "$OUT") - 1 )) runs, $(head -1 "$OUT" | awk -F'\t' '{print NF-7}') attributes)"
 echo "       Title and the characteristics are both recorded on purpose. Where they disagree,"
 echo "       the submitter made a mistake in one of them and the pipeline cannot tell which."
