@@ -1,4 +1,4 @@
-# BulkRNAseq_Pipeline
+# BulkRNAseq_AUtoPipeline
 
 **Takes raw sequencing files (FASTQ) and produces a gene-level expression table.**
 
