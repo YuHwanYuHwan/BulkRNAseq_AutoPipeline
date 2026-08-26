@@ -157,6 +157,7 @@ BulkRNAseq_AutoPipeline/
 │
 └── Scripts/                                # in the order they run
     ├── PublicData_download.sh              # SRR accessions -> FASTQ in a group folder
+    ├── fetch_metadata.sh                   # GEO / BioSample -> metadata.tsv
     ├── list_samples.sh                     # print what the pipeline sees in a group
     │
     ├── run_pipeline.sh                     # wrapper: every step below, in order
@@ -354,28 +355,44 @@ SRR0000003                                                  SRR0000002,RNA-Seq,1
 
 The last one is a run table saved straight from SRA Run Selector — nothing to clean up first.
 
-The script downloads the FASTQ files, compresses them, and **groups runs into a subfolder when
-several belong to one sample.**
+The script downloads the FASTQ files, compresses them, **groups runs into a subfolder when
+several belong to one sample**, and then collects the sample metadata.
 
-That last part matters. A single GEO sample (GSM) is often split into several SRA runs (SRR).
+That grouping matters. A single GEO sample (GSM) is often split into several SRA runs (SRR).
 Treating each run as its own sample **inflates your sample count and halves the apparent
-expression.** To get this right the script fetches SRA runinfo into `.runinfo.csv` and reads
-the `SampleName` column; later steps then merge those runs automatically. That file is
-machinery, not your metadata — ignore it.
+expression.** To get it right the script fetches SRA runinfo into `.runinfo.csv` and reads the
+`SampleName` column; later steps then merge those runs automatically. That file is machinery,
+not your metadata — ignore it.
 
-**It does not download a sample sheet, and that is deliberate.** The conditions you actually
-need — tissue, treatment, donor, cell type — are not in runinfo at all. When the download
-finishes the script prints a Run Selector link for the study and asks you to save the metadata
-sheet yourself:
+### The metadata table
+
+runinfo says which sample a run belongs to and nothing about what the sample *is*. The
+conditions live in GEO — or in BioSample, for submissions that never went through GEO — so
+`fetch_metadata.sh` reads them from there and joins on the sample accession. It runs at the end
+of the download, and can be run again on its own:
+
+```bash
+bash Scripts/fetch_metadata.sh rawData/ProjectA/GroupA
+```
+
+The result is `metadata.tsv`, one row per run, one column per attribute the submitter used:
 
 ```
-rawData/<project>/<group>/SraRunTable.csv
+Run          Sample      Title                 SourceName        tissue            treatment
+SRR0000001   GSM0000001  Donor A, control      peripheral blood  peripheral blood  Transduced with SCR0
+SRR0000002   GSM0000002  Donor A, treated      peripheral blood  peripheral blood  Transduced with SCR(S2-S2)
 ```
 
-Nothing in the pipeline reads that file. You read it, to know which count-matrix column is
+**The title and the characteristics are both recorded on purpose.** They are two things the
+submitter typed, and in real datasets they sometimes disagree — a title saying one condition
+while the treatment field says another, consistently across every sample. Nothing can tell from
+the outside which one is right, so both are written down and the conflict is visible instead of
+resolved by guesswork. Read this file before you name anything.
+
+Nothing in the pipeline reads `metadata.tsv`. You do, to know which count-matrix column is
 which condition. Checking that the dataset is genuinely bulk RNA-seq — not single-cell, not
-3'-tag — is part of the same look, and it is on you: the pipeline will happily process 10x
-reads and hand you meaningless numbers.
+3'-tag — belongs to the same look, and is on you: the pipeline will happily process 10x reads
+into meaningless counts.
 
 ### Option B. Your own data
 

@@ -2,7 +2,7 @@
 # PublicData_download.sh <group_dir> <SRR ...>
 #   Downloads raw FASTQ for a list of SRR accessions into the group folder.
 #   Runs sharing a SampleName go into a subfolder, which marks them as one sample to merge.
-#   The sample metadata sheet is NOT downloaded - see the closing message.
+#   Sample metadata is collected afterwards by fetch_metadata.sh.
 #
 #   bash PublicData_download.sh rawData/ProjectA/GroupA SRR0000001 SRR0000002
 #   bash PublicData_download.sh rawData/ProjectA/GroupA srr_list.txt
@@ -74,18 +74,16 @@ for acc in "${ACCS[@]}"; do
     touch "${dest}/.${acc}.done"
 done
 
+bash "$(dirname "${BASH_SOURCE[0]}")/fetch_metadata.sh" "$GROUP_DIR" ||     echo "[WARN] metadata fetch failed - rerun Scripts/fetch_metadata.sh $GROUP_DIR"
+
 cat <<MSG
 
 [DONE] ${#ACCS[@]} runs -> $GROUP_DIR
 
   Next steps:
 
-  1. Download the metadata sheet and save it as
-         ${GROUP_DIR}/SraRunTable.csv
-     SRA Run Selector: https://www.ncbi.nlm.nih.gov/Traces/study/?acc=${SRP:-<study>}
-     (select all runs -> Metadata -> download)
-     It carries what the download cannot know: tissue, treatment, donor, cell type.
-     The pipeline does not read it. You do, to tell the sample columns apart.
+  1. Look at ${GROUP_DIR}/metadata.tsv and decide which samples are which.
+     The pipeline does not read it; you do, to tell the count-matrix columns apart.
 
   2. Write ${GROUP_DIR}/group.conf
 
