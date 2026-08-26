@@ -43,6 +43,24 @@ curl -sf "${RUNINFO_URL}$(IFS=,; echo "${ACCS[*]}")" > "$META"
 echo "[INFO] runinfo: $(( $(wc -l < "$META") - 1 )) runs"
 SRP=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) if ($i=="SRAStudy") c=i; next } c { print $c; exit }' "$META")
 
+# -- 1b. group.conf ---------------------------------------------------------
+# The species is in runinfo, so for public data there is nothing left for a person to type.
+# Written only when the file is absent - a conf you edited is never overwritten. A group
+# holding more than one organism gets nothing: that is a mistake to look at, not to guess past.
+CONF="${GROUP_DIR}/group.conf"
+if [ ! -f "$CONF" ]; then
+    SPECIES=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) if ($i=="ScientificName") c=i; next }
+                       c { print $c }' "$META" | sort -u | tr ' ' '_')
+    if [ "$(wc -l <<< "$SPECIES")" -eq 1 ] && [ -n "$SPECIES" ]; then
+        { echo "species      = $SPECIES"; echo "strandedness ="; } > "$CONF"
+        echo "[CONF] species = $SPECIES"
+        [ -d "${REF_ROOT}/${SPECIES}" ] ||
+            echo "[WARN] no ${REF_ROOT}/${SPECIES} yet - download that genome before running the pipeline"
+    else
+        echo "[WARN] could not settle on one organism - write $CONF yourself"
+    fi
+fi
+
 # ── 2. acc -> SampleName map, one pass. Samples with >1 run go into a subfolder.
 declare -A SAMPLE_OF MULTI count
 while IFS=$'	' read -r acc smp; do
@@ -83,10 +101,8 @@ cat <<MSG
   1. Look at ${GROUP_DIR}/metadata.tsv and decide which samples are which.
      The pipeline does not read it; you do, to tell the count-matrix columns apart.
 
-  2. Write ${GROUP_DIR}/group.conf
-
-         species      = Homo_sapiens     # must match a folder in reference_Genomes/
-         strandedness =                  # leave empty; the probe fills it in
+  2. ${GROUP_DIR}/group.conf is written for you, with the species taken from runinfo.
+     Nothing else needs filling in - the probe records the strandedness itself.
 
   3. bash Scripts/run_pipeline.sh ${GROUP_DIR}
 MSG

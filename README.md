@@ -115,7 +115,7 @@ BulkRNAseq_AutoPipeline/
 │   ├── ProjectA/
 │   │   ├── GroupA/
 │   │   │   ├── accessions.csv              # ← YOU write this for public data: SRR/ERR/DRR
-│   │   │   ├── group.conf                  # ← YOU write this: species, kit, strandedness
+│   │   │   ├── group.conf                  # written by the download; yours to write for your own data
 │   │   │   ├── metadata.tsv                # fetched from GEO / BioSample after download
 │   │   │   ├── Control_1_1.fastq.gz        # flat file: filename = sample name
 │   │   │   ├── Control_1_2.fastq.gz
@@ -179,8 +179,9 @@ BulkRNAseq_AutoPipeline/
         └── selfcheck.sh                    # logic tests that run without any tool installed
 ```
 
-Three things you create, everything else is generated: the FASTQ under `rawData/`, the
-`group.conf` beside them, and the genome files under `reference_Genomes/`.
+What you create: the FASTQ under `rawData/` — or the `accessions.csv` that fetches them — and
+the genome files under `reference_Genomes/`. For public data `group.conf` and `metadata.tsv`
+are written for you; for your own FASTQ, `group.conf` is where the species comes from.
 
 `Processed/` and `Output/` are built to mirror `rawData/` exactly, so a group's intermediates
 and its results are always at the same path under a different top folder.
@@ -459,7 +460,12 @@ runs for hours.
 
 ## 4. Writing group.conf
 
-**This is the only file you write by hand.** It goes inside the group folder.
+**For public data you do not write it at all.** The download takes the species from runinfo and
+writes the file; the probe fills in the strandedness later. It is written only when absent, so
+a conf you edited by hand is never overwritten, and a group holding more than one organism gets
+nothing — that is a mistake to look at rather than to guess past.
+
+For your own FASTQ there is no runinfo, so this is where the species comes from:
 
 ```bash
 cat > rawData/ProjectA/GroupA/group.conf <<'CONF'
