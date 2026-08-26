@@ -40,7 +40,7 @@ else
     # Emitted in the GEO shape so the parser below does not need a second form.
     echo "[BIOS] $FIRST_SAMPLE is not a GSM - reading BioSample instead"
     : > "$RAW"
-    while IFS=$'\t' read -r run smp bios; do
+    while IFS=$'\t' read -r run smp bios proj; do
         [ -n "$bios" ] || continue
         uid=$(curl -sf "${EUTILS}/esearch.fcgi?db=biosample&term=${bios}" |
               grep -oE '<Id>[0-9]+' | head -1 | cut -d'>' -f2)

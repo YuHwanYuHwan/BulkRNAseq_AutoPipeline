@@ -92,11 +92,11 @@ t_matrix() {
 # strand_report from common.sh on synthetic counts: does __no_feature map to the right call?
 t_probe_verdict() {
     local v got
-    for v in "150 reverse" "500 no" "850 yes"; do
+    #                  clear cases          gaps that must stop
+    for v in "13 reverse" "50 no" "85 yes" "30 -" "68 -"; do
         set -- $v
-        printf 'GENE1\t%d\n__no_feature\t%d\n__ambiguous\t0\n' "$((1000-$1))" "$1" > "$TMP/c"
-        got=$(strand_report "$TMP/c" | awk '/likely strandedness/ { print $5 }')
-        [ "$got" = "$2" ] || { echo "$(($1/10))% -> $got (expected $2)"; return 1; }
+        got=$(strand_call "$1"); got="${got:--}"
+        [ "$got" = "$2" ] || { echo "${1}% -> $got (expected $2)"; return 1; }
     done
 }
 

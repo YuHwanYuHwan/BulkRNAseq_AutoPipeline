@@ -35,14 +35,7 @@ FRAC=$(awk -F'	' '/^__no_feature/ { nf=$2 } { t+=$2 } END { printf "%.1f", 100*n
 rm -f "$TMP"
 echo "$REPORT"
 
-# Bands leave gaps on purpose. The old 35/65 cut points touched, so 34% and 36% got
-# different answers off a difference that means nothing. Data sitting in a gap - a
-# rRNA-depleted library, a degraded sample - is exactly what a person should look at.
-AUTO=$(awk -v r="$FRAC" 'BEGIN {
-    if      (r < 25)            print "reverse"
-    else if (r >= 40 && r <= 60) print "no"
-    else if (r > 75)            print "yes"
-}')
+AUTO=$(strand_call "$FRAC")
 
 # PROBE_AUTO=0 keeps the decision manual - the teaching setup uses that, because reading
 # the number is the point of the exercise.

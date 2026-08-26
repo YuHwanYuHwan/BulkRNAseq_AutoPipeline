@@ -56,7 +56,7 @@ init_group() {
 
 # Sample list. One line per sample: sample_id<TAB>R1(comma-joined)<TAB>R2(comma-joined, empty if single-end)
 list_samples() {
-    local d f f2 stem s
+    local d f stem s
     for d in "$GROUP_DIR"/*/; do
         [ -d "$d" ] || continue
         s="$(basename "$d")"
@@ -95,8 +95,8 @@ max_read_length() {   # $1=fastq(.gz)  [$2=reads to scan, default 10000]
     echo "$m"
 }
 
-# Read an HTSeq counts file and report the __no_feature fraction with a strandedness verdict.
-# Lives here so probe_strandedness.sh and the self-check exercise the same thresholds.
+# Read an HTSeq counts file and report how the reads were assigned. Reporting only: the call
+# belongs to probe_strandedness.sh, which owns the thresholds.
 strand_report() {   # $1 = *.gene.counts
     awk -F'\t' '
         /^__/ { special[$1]=$2; tot+=$2; next }
@@ -106,13 +106,21 @@ strand_report() {   # $1 = *.gene.counts
             printf "\n  total reads counted : %d\n", tot
             printf "  assigned to genes   : %d (%.1f%%)\n", assigned, 100*assigned/tot
             printf "  __no_feature        : %d (%.1f%%)\n", nf, 100*nf/tot
-            printf "  __ambiguous         : %d\n\n", special["__ambiguous"]+0
-            r = 100*nf/tot
-            if (r < 35)      verdict = "reverse   (most reads assigned)"
-            else if (r < 65) verdict = "no        (about half assigned -> unstranded)"
-            else             verdict = "yes       (almost nothing assigned -> forward)"
-            printf "  --> likely strandedness : %s\n", verdict
+            printf "  __ambiguous         : %d\n", special["__ambiguous"]+0
         }' "$1"
+}
+
+# __no_feature fraction from a -s reverse run -> strandedness, or nothing when the number
+# sits between the three cases. The bands leave gaps on purpose: touching cut points would
+# make 34% and 36% different answers off a difference that means nothing, and a wrong
+# strandedness raises no error - it quietly deflates every count. Near a boundary, stopping
+# to ask beats guessing.
+strand_call() {   # $1 = __no_feature percentage
+    awk -v r="$1" 'BEGIN {
+        if      (r < 25)             print "reverse"
+        else if (r >= 40 && r <= 60) print "no"
+        else if (r > 75)             print "yes"
+    }'
 }
 
 # Bare version number for each tool. Every tool prints its version differently

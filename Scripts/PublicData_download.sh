@@ -29,7 +29,7 @@ if [ $# -eq 1 ] && [ -f "$1" ]; then
 else
     ACCS=("$@")
 fi
-[ ${#ACCS[@]} -gt 0 ] || { echo "[ERROR] no SRR accession given"; exit 1; }
+[ ${#ACCS[@]} -gt 0 ] || { echo "[ERROR] no accession given"; exit 1; }
 
 mkdir -p "$GROUP_DIR"
 # runinfo is machinery, not the user's metadata: it exists only to group runs by sample.
@@ -37,10 +37,8 @@ mkdir -p "$GROUP_DIR"
 META="${GROUP_DIR}/.runinfo.csv"
 
 # -- 1. runinfo -------------------------------------------------------------
-curl -sf "${RUNINFO_URL}${ACCS[0]}" > "$META"
-for acc in "${ACCS[@]:1}"; do
-    curl -sf "${RUNINFO_URL}${acc}" | tail -n +2 >> "$META"
-done
+# The endpoint takes a comma-separated list, so this is one request rather than one per run
+curl -sf "${RUNINFO_URL}$(IFS=,; echo "${ACCS[*]}")" > "$META"
 [ -s "$META" ] || { echo "[ERROR] runinfo lookup failed"; exit 1; }
 echo "[INFO] runinfo: $(( $(wc -l < "$META") - 1 )) runs"
 SRP=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) if ($i=="SRAStudy") c=i; next } c { print $c; exit }' "$META")
