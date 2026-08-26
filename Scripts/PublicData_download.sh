@@ -5,7 +5,7 @@
 #   Sample metadata is collected afterwards by fetch_metadata.sh.
 #
 #   bash PublicData_download.sh rawData/ProjectA/GroupA SRR0000001 SRR0000002
-#   bash PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupA/accessions.txt
+#   bash PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupA/accessions.csv
 #
 #   The list file has no format: every SRR/ERR/DRR accession found anywhere in it is used,
 #   duplicates dropped. A plain list, a comma-separated line, or a whole SraRunTable.csv

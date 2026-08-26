@@ -114,7 +114,7 @@ BulkRNAseq_AutoPipeline/
 ├── rawData/                                # ← YOU put data here
 │   ├── ProjectA/
 │   │   ├── GroupA/
-│   │   │   ├── accessions.txt              # ← YOU write this for public data: SRR/ERR/DRR
+│   │   │   ├── accessions.csv              # ← YOU write this for public data: SRR/ERR/DRR
 │   │   │   ├── group.conf                  # ← YOU write this: species, kit, strandedness
 │   │   │   ├── metadata.tsv                # fetched from GEO / BioSample after download
 │   │   │   ├── Control_1_1.fastq.gz        # flat file: filename = sample name
@@ -334,7 +334,7 @@ treated samples belong in the same group; an unrelated experiment gets its own g
 
 ### Option A. Public data (GEO/SRA)
 
-Make the group folder, put the accessions in a file called `accessions.txt` inside it, and hand
+Make the group folder, put the accessions in a file called `accessions.csv` inside it, and hand
 that file to the download script. Keeping the list next to the data is the point: a year later
 the folder still says which runs it was built from.
 
@@ -342,13 +342,13 @@ the folder still says which runs it was built from.
 G=rawData/ProjectA/GroupA
 mkdir -p $G
 
-cat > $G/accessions.txt <<'EOF'
+cat > $G/accessions.csv <<'EOF'
 SRR0000001
 SRR0000002
 SRR0000003
 EOF
 
-bash Scripts/PublicData_download.sh $G $G/accessions.txt
+bash Scripts/PublicData_download.sh $G $G/accessions.csv
 ```
 
 **The file has no format.** Every `SRR`/`ERR`/`DRR` accession found anywhere in it is used and
@@ -361,11 +361,11 @@ SRR0000003                                                  SRR0000002,RNA-Seq,1
 ```
 
 The last one is a run table saved straight from SRA Run Selector — save it as
-`$G/accessions.txt` and run, nothing to clean up first. For a consecutive range there is no
+`$G/accessions.csv` and run, nothing to clean up first. For a consecutive range there is no
 need to type them out:
 
 ```bash
-seq 38207576 38207593 | sed 's/^/SRR/' > $G/accessions.txt
+seq 38207576 38207593 | sed 's/^/SRR/' > $G/accessions.csv
 ```
 
 A handful of runs needs no file at all:
