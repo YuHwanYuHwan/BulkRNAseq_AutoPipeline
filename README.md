@@ -2,7 +2,7 @@
 
 **Takes raw sequencing files (FASTQ) and produces a gene-level expression table.**
 
-Interpretation steps — differential expression, GO enrichment, and so on — are *not* here.
+Interpretation steps (differential expression, GO enrichment, and so on) are *not* here.
 Everything that comes *before* them is. Preprocessing is the same work in every project, so
 rather than rewriting it each time, every project uses this one repository.
 
@@ -25,12 +25,12 @@ The green box is what this pipeline hands you. Everything after it is your analy
 
 ## Contents
 
-1. [Before you start — what each step does](#1-before-you-start--what-each-step-does)
+1. [Before you start: what each step does](#1-before-you-start-what-each-step-does)
 2. [Installation](#2-installation)
 3. [Adding your data](#3-adding-your-data)
 4. [Writing group.conf](#4-writing-groupconf)
 5. [Running the pipeline](#5-running-the-pipeline)
-6. [Strandedness — measured, and yours to settle when it is close](#6-strandedness--measured-and-yours-to-settle-when-it-is-close)
+6. [Strandedness: measured, and yours to settle when it is close](#6-strandedness-measured-and-yours-to-settle-when-it-is-close)
 7. [Counting and normalization](#7-counting-and-normalization)
 8. [Reading the results](#8-reading-the-results)
 9. [Common errors](#9-common-errors)
@@ -41,7 +41,7 @@ The green box is what this pipeline hands you. Everything after it is your analy
 
 ---
 
-## 1. Before you start — what each step does
+## 1. Before you start: what each step does
 
 If this is your first time, this table is enough. Running the pipeline is two commands; the
 table explains what happens inside them.
@@ -56,9 +56,9 @@ table explains what happens inside them.
 
 **Two terms up front:**
 
-- **read** — a short sequence fragment the sequencer read out (typically 50–150 bp). A FASTQ
+- **read**: a short sequence fragment the sequencer read out (typically 50–150 bp). A FASTQ
   file holds tens of millions of them.
-- **paired-end** — both ends of the same fragment were read. Files arrive as `_1` and `_2`.
+- **paired-end**: both ends of the same fragment were read. Files arrive as `_1` and `_2`.
   If only one end was read it is **single-end** and there is a single file. The pipeline detects
   which one you have.
 
@@ -71,12 +71,12 @@ table explains what happens inside them.
 | | |
 |---|---|
 | **A Linux server with a shell** | Everything here runs from the command line |
-| **conda** | Miniconda or Anaconda, installed and on your `PATH`. `setup.sh` builds the tool environment with it but cannot install conda itself — see below |
+| **conda** | Miniconda or Anaconda, installed and on your `PATH`. `setup.sh` builds the tool environment with it but cannot install conda itself (see below) |
 | **Disk** | Roughly 3–4× your raw FASTQ, plus ~30 GB per STAR index. A 40 GB dataset wants ~200 GB free |
 | **Memory** | 32 GB or more. Building a human STAR index needs that much on its own |
-| **Time** | Hours, not minutes. A first run on ~18 samples takes most of a day |
+| **Time** | Hours, not minutes. Downloading and processing 18 samples filled a working day |
 
-If conda is missing, install Miniconda into your home directory — no admin rights needed:
+If conda is missing, install Miniconda into your home directory. No admin rights are needed:
 
 ```bash
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
@@ -179,7 +179,7 @@ BulkRNAseq_AutoPipeline/
         └── selfcheck.sh                    # logic tests that run without any tool installed
 ```
 
-What you create: the FASTQ under `rawData/` — or the `accessions.csv` that fetches them — and
+What you create: the FASTQ under `rawData/` (or the `accessions.csv` that fetches them) and
 the genome files under `reference_Genomes/`. For public data `group.conf` and `metadata.tsv`
 are written for you; for your own FASTQ, `group.conf` is where the species comes from.
 
@@ -225,7 +225,7 @@ coordinates (GTF)**. These are large (several GB) and the version choice is your
 download them yourself.
 
 Get them from the [Ensembl FTP](https://ftp.ensembl.org/pub/) and place them in
-`reference_Genomes/` **inside the repository**, in the layout below. The path is fixed — there
+`reference_Genomes/` **inside the repository**, in the layout below. The path is fixed; there
 is no setting for it.
 
 ```
@@ -251,7 +251,7 @@ cd ../..
 > locate files by that name.
 
 **Do not download a STAR index.** An index is the genome pre-processed into a structure STAR
-can search quickly, and it has to match the read length of your data — so the pipeline
+can search quickly, and it has to match the read length of your data, so the pipeline
 **builds it when it is needed**. Once built it is kept forever and reused by later datasets.
 (About 30 GB of disk per index; building one needs 32 GB or more of RAM.)
 
@@ -306,7 +306,7 @@ FASTQC_BIN="/home/user/FastQC/fastqc"
 ```
 
 The order is: a SLURM reservation first, then `THREADS`, then `nproc`. Inside a job the
-reservation always wins — reserving 32 cores and then running on 8 wastes the other 24, so if
+reservation always wins. Reserving 32 cores and then running on 8 wastes the other 24, so if
 you want fewer, reserve fewer. `THREADS` is for the case outside a job: on a shared head node,
 `nproc` would hand one run every core on the machine, and a second run would then compete with
 the first for them.
@@ -326,8 +326,8 @@ If your tools are already installed some other way, set `CONDA_ENV=""`.
 rawData/<project>/<group>/
 ```
 
-- **project** — the research unit. For example `ProjectA`
-- **group** — **the unit that produces one count matrix.** For example `Treated_vs_Control`
+- **project**: the research unit. For example `ProjectA`
+- **group**: **the unit that produces one count matrix.** For example `Treated_vs_Control`
 
 You split into groups by asking "will these samples be compared to each other?" Controls and
 treated samples belong in the same group; an unrelated experiment gets its own group.
@@ -340,16 +340,15 @@ that file to the download script. Keeping the list next to the data is the point
 the folder still says which runs it was built from.
 
 ```bash
-G=rawData/ProjectA/GroupA
-mkdir -p $G
+mkdir -p rawData/ProjectA/GroupA
 
-cat > $G/accessions.csv <<'EOF'
+cat > rawData/ProjectA/GroupA/accessions.csv <<'EOF'
 SRR0000001
 SRR0000002
 SRR0000003
 EOF
 
-bash Scripts/PublicData_download.sh $G $G/accessions.csv
+bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupA/accessions.csv
 ```
 
 **The file has no format.** Every `SRR`/`ERR`/`DRR` accession found anywhere in it is used and
@@ -361,18 +360,18 @@ SRR0000002                                                  SRR0000001,RNA-Seq,3
 SRR0000003                                                  SRR0000002,RNA-Seq,1474362300
 ```
 
-The last one is a run table saved straight from SRA Run Selector — save it as
-`$G/accessions.csv` and run, nothing to clean up first. For a consecutive range there is no
-need to type them out:
+The last one is a run table saved straight from SRA Run Selector. Save it as
+`accessions.csv` in the group folder and run, nothing to clean up first. For a consecutive
+range there is no need to type them out:
 
 ```bash
-seq 38207576 38207593 | sed 's/^/SRR/' > $G/accessions.csv
+seq 38207576 38207593 | sed 's/^/SRR/' > rawData/ProjectA/GroupA/accessions.csv
 ```
 
 A handful of runs needs no file at all:
 
 ```bash
-bash Scripts/PublicData_download.sh $G SRR0000001 SRR0000002
+bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA SRR0000001 SRR0000002
 ```
 
 The script downloads the FASTQ files, compresses them, **groups runs into a subfolder when
@@ -382,12 +381,12 @@ That grouping matters. A single GEO sample (GSM) is often split into several SRA
 Treating each run as its own sample **inflates your sample count and halves the apparent
 expression.** To get it right the script fetches SRA runinfo into `.runinfo.csv` and reads the
 `SampleName` column; later steps then merge those runs automatically. That file is machinery,
-not your metadata — ignore it.
+not your metadata; ignore it.
 
 ### The metadata table
 
 runinfo says which sample a run belongs to and nothing about what the sample *is*. The
-conditions live in GEO — or in BioSample, for submissions that never went through GEO — so
+conditions live in GEO, or in BioSample for submissions that never went through GEO, so
 `fetch_metadata.sh` reads them from there and joins on the sample accession. It runs at the end
 of the download, and can be run again on its own:
 
@@ -404,17 +403,17 @@ SRR0000002  GSM0000002  GSE000000  PRJNA0000000  SAMN00000002  Donor A, treated 
 ```
 
 The accession columns are there so a matrix you find a year later still says where it came
-from — series, project, and sample, next to the run that produced each column.
+from: series, project, and sample, next to the run that produced each column.
 
 **The title and the characteristics are both recorded on purpose.** They are two things the
-submitter typed, and in real datasets they sometimes disagree — a title saying one condition
+submitter typed, and in real datasets they sometimes disagree: a title saying one condition
 while the treatment field says another, consistently across every sample. Nothing can tell from
 the outside which one is right, so both are written down and the conflict is visible instead of
 resolved by guesswork. Read this file before you name anything.
 
 Nothing in the pipeline reads `metadata.tsv`. You do, to know which count-matrix column is
-which condition. Checking that the dataset is genuinely bulk RNA-seq — not single-cell, not
-3'-tag — belongs to the same look, and is on you: the pipeline will happily process 10x reads
+which condition. Checking that the dataset is genuinely bulk RNA-seq, not single-cell or 3'-tag,
+belongs to the same look, and is on you: the pipeline will happily process 10x reads
 into meaningless counts.
 
 ### Option B. Your own data
@@ -452,7 +451,7 @@ To check what the pipeline sees:
 bash Scripts/list_samples.sh rawData/ProjectA/GroupA
 ```
 
-Output is `sample <TAB> R1 <TAB> R2`. What you see there is exactly what will be processed — a
+Output is `sample <TAB> R1 <TAB> R2`. What you see there is exactly what will be processed. A
 sample missing from this list stays missing, so it is worth a look before starting a job that
 runs for hours.
 
@@ -463,7 +462,7 @@ runs for hours.
 **For public data you do not write it at all.** The download takes the species from runinfo and
 writes the file; the probe fills in the strandedness later. It is written only when absent, so
 a conf you edited by hand is never overwritten, and a group holding more than one organism gets
-nothing — that is a mistake to look at rather than to guess past.
+nothing, which is a mistake to look at rather than to guess past.
 
 For your own FASTQ there is no runinfo, so this is where the species comes from:
 
@@ -490,7 +489,7 @@ The rule is: **anything derivable from the data is never asked of a human.** Rea
 from the FASTQ; layout comes from the file count. Every field a person types is another chance
 for a typo to corrupt the result.
 
-`strandedness` is the opposite case — it **cannot be known without counting the data**, so a
+`strandedness` is the opposite case: it **cannot be known without counting the data**, so a
 person supplies it.
 </details>
 
@@ -506,33 +505,34 @@ This runs every step in order: FastQC, cutadapt, STAR, the strandedness probe, H
 and the QC report. The probe records an unambiguous strandedness itself, so the run carries
 straight on to counting without asking.
 
-**It takes a long time.** Depending on sample count and sequencing depth, STAR alone is roughly
-20 minutes to an hour per sample, and the first run adds index building (1–2 hours) in front of
-that. To keep it running after you disconnect:
+**It takes hours.** On the run these figures come from, 18 human samples at 32 threads with
+roughly 22M read pairs each, alignment took 55 minutes and counting 40. Your own timings will
+differ with depth, thread count and disk. A first run also builds the STAR index, which we have
+not timed here and should be expected to take hours. To keep it going after you disconnect:
 
 ```bash
 nohup bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA > logs/run.log 2>&1 &
 tail -f logs/run.log      # Ctrl+C stops watching, not the job
 ```
 
-To stop a background run later, kill the whole process group — killing the wrapper alone
+To stop a background run later, kill the whole process group. Killing the wrapper alone
 leaves `STAR` or `cutadapt` running as orphans:
 
 ```bash
 kill -- -$(ps -o pgid= <PID> | tr -d ' ')
 ```
 
-On a cluster you would submit this as a job instead — see [section 13](#13-running-on-slurm).
+On a cluster you would submit this as a job instead (see [section 13](#13-running-on-slurm)).
 
 Every step stamps its start and end, so the log reads as a timeline and a slow step is obvious
 without timing anything yourself:
 
 ```
-[2026-08-20 11:02:14] ==> FastQC
+[2026-08-26 11:02:14] ==> FastQC
 [FQC ] Control_1
 ...
-[2026-08-20 11:41:07] <== FastQC  00:38:53
-[2026-08-20 11:41:07] ==> Trimming
+[2026-08-26 11:41:07] <== FastQC  00:38:53
+[2026-08-26 11:41:07] ==> Trimming
 ```
 
 A failed step is stamped too, with its exit code.
@@ -540,44 +540,46 @@ A failed step is stamped too, with its exit code.
 ### What a healthy run looks like
 
 ```
-[2026-08-20 11:02:14] ==> FastQC
+[2026-08-26 11:02:14] ==> FastQC
 [FQC ] Control_1
 [FQC ] Control_2
 ...
 [DONE] FastQC 18 samples -> .../Processed/ProjectA/GroupA/Fastqc_result
-[2026-08-20 11:41:07] <== FastQC  00:38:53
+[2026-08-26 11:41:07] <== FastQC  00:38:53
 
-[2026-08-20 11:41:07] ==> Trimming
+[2026-08-26 11:41:07] ==> Trimming
 [KIT ] Illumina_universal  R1=AGATCGGAAGAGCACACGTCT  R2=AGATCGGAAGAGCGTCGTGTA
 [TRIM] Control_1
 ...
 [DONE] cutadapt 18 samples -> .../AdapterTrimming_result
-[2026-08-20 13:20:41] <== Trimming  01:39:34
+[2026-08-26 13:20:41] <== Trimming  01:39:34
 
-[2026-08-20 13:20:41] ==> Alignment
+[2026-08-26 13:20:41] ==> Alignment
 [LEN ] max trimmed read = 150bp -> sjdbOverhang=149
 [IDX ] reuse .../reference_Genomes/Homo_sapiens/index/overhang149
 [STAR] Control_1
 ...
 [DONE] STAR 18 samples -> .../Alignment_result
-       next: probe_strandedness.sh .../rawData/ProjectA/GroupA
-[2026-08-20 19:55:02] <== Alignment  06:34:21
+[2026-08-26 14:16:02] <== Alignment  00:55:21
 
-[2026-08-20 19:55:02] ==> probe_strandedness
+[2026-08-26 14:16:02] ==> probe_strandedness
 [PROBE] sample=Control_1  -s reverse
 ...
 ```
+
+The step names and the shape are what the pipeline prints. The durations are from one run of
+18 human samples on 32 threads, and the sample names have been changed.
 
 Four things say it is going right:
 
 | Line | What to check |
 |---|---|
-| `[DONE] FastQC 18 samples` | the count matches the samples you expect — this is the first place a missing file shows up |
+| `[DONE] FastQC 18 samples` | the count matches the samples you expect. This is the first place a missing file shows up |
 | `[KIT ] ... R1=AGATCGG...` | an adapter was found for your kit. `R2=(none)` is correct for single-end |
 | `[LEN ] ... sjdbOverhang=149` | derived from your trimmed reads. 150 bp reads give 149 |
-| `[IDX ] reuse ...` | an existing index fits. `[IDX ] building ...` instead means a new one is being made — correct, but adds 1–2 hours |
+| `[IDX ] reuse ...` | an existing index fits. `[IDX ] building ...` instead means a new one is being made, which is correct but adds hours |
 
-`[SKIP] Control_1` appears when you re-run after an interruption — the `.done` marker doing its
+`[SKIP] Control_1` appears when you re-run after an interruption. That is the `.done` marker doing its
 job, not an error. A resumed run reports the group's full size with a note, so the count stays
 comparable:
 
@@ -605,7 +607,7 @@ bash Scripts/probe_strandedness.sh rawData/ProjectA/GroupA
 
 ---
 
-## 6. Strandedness — measured, and yours to settle when it is close
+## 6. Strandedness: measured, and yours to settle when it is close
 
 ### What is being decided
 
@@ -668,7 +670,7 @@ gaps between the three cases on purpose:
 | **25–40% or 60–75%** | **stops with exit code 2 and asks you** |
 
 The gaps are the point. Cut points that touch would make 34% and 36% different answers off a
-difference that means nothing, and a wrong strandedness never announces itself — it just
+difference that means nothing, and a wrong strandedness never announces itself; it just
 deflates every count. Near a boundary an interruption beats a coin flip. Libraries that land in
 a gap tend to be the ones worth a second look: rRNA-depleted total RNA carries more intronic
 signal, a degraded sample assigns less of everything.
@@ -685,14 +687,14 @@ When it stops it prints the three commands and picks none of them:
       sed -i 's/^strandedness.*/strandedness = yes/'     rawData/ProjectA/GroupA/group.conf
 ```
 
-`PROBE_AUTO=0` keeps every decision manual however clear the number is — for when the point is
+`PROBE_AUTO=0` keeps every decision manual however clear the number is. Use it when the point is
 that someone reads it themselves rather than that a matrix appears quickly.
 
 ---
 
 ## 7. Counting and normalization
 
-Nothing to launch here — once the strandedness is settled the same run continues into HTSeq,
+Nothing to launch here. Once the strandedness is settled the same run continues into HTSeq,
 the count matrix, CPM, and the QC report.
 
 **If the probe put the run on hold**, record the value and run the same command again. Every
@@ -713,25 +715,25 @@ Counting refuses to start while the value is missing, which beats burning hours 
 ### What a healthy run looks like
 
 ```
-[2026-08-20 21:03:11] ==> ReadCount
+[2026-08-26 14:29:11] ==> ReadCount
 [HTSEQ] strandedness=reverse  gtf=Homo_sapiens.GRCh38.113.gtf
 [CNT ] Control_1
 ...
 [DONE] HTSeq 18 samples
        matrix: .../Output/ProjectA/GroupA/GroupA_count_matrix.tsv  (78932 genes x 18 samples)
-[2026-08-20 22:15:40] <== ReadCount  01:12:29
+[2026-08-26 15:09:40] <== ReadCount  00:40:29
 
-[2026-08-20 22:15:40] ==> CalcCPM
+[2026-08-26 15:09:40] ==> CalcCPM
 [CPM ] 78932 genes x 18 samples -> .../GroupA_CPM.tsv
-[2026-08-20 22:15:52] <== CalcCPM  00:00:12
+[2026-08-26 15:09:52] <== CalcCPM  00:00:12
 
-[2026-08-20 22:15:52] ==> MultiQC
+[2026-08-26 15:09:52] ==> MultiQC
 [DONE] .../Output/ProjectA/GroupA/GroupA_pipeline_report.txt
-[2026-08-20 22:16:30] <== MultiQC  00:00:38
+[2026-08-26 15:10:30] <== MultiQC  00:00:38
 ```
 
 No `[WARN]` line is the point here. `[WARN] Control_1: __no_feature 68.3%` means the
-strandedness is wrong — fix `group.conf`, delete the `.done` markers under
+strandedness is wrong. Fix `group.conf`, delete the `.done` markers under
 `Processed/.../HTseqCount_result/`, and run the pipeline again.
 
 The gene count depends on the annotation, not on your data: every sample in a group is counted
@@ -746,7 +748,7 @@ release 113 for human gives 78,932 rows, every biotype included.
   __no_feature      mean 2.9%  max 3.3%
 ```
 
-A low `__no_feature` is the confirmation that the strandedness call was right — the same
+A low `__no_feature` is the confirmation that the strandedness call was right: the same
 library read 43.6% under the probe's `-s reverse` and 2.9% once counted as unstranded.
 
 ---
@@ -769,7 +771,7 @@ ENSG00000000003        1284       1301        997       1043
 ENSG00000000005           0          0          0          0
 ```
 
-From here the count matrix goes into whatever you use for differential expression — DESeq2 or
+From here the count matrix goes into whatever you use for differential expression. DESeq2 and
 edgeR in R are the usual choices, both of which take **raw counts**, not the CPM table. The CPM
 file is for plotting and clustering, where library size has to be out of the way. That analysis
 is deliberately not part of this repository: preprocessing is identical everywhere, while the
@@ -777,7 +779,7 @@ comparison you run is specific to your question.
 
 **`pipeline_report.txt`** exists for the day you write the paper. It records the tool versions,
 parameters, and genome release, and ends with a Methods paragraph you can edit rather than
-compose — so that a year later you are not hunting for which STAR version you used.
+compose, so that a year later you are not hunting for which STAR version you used.
 
 <details>
 <summary>What the report contains</summary>
@@ -819,8 +821,8 @@ compose — so that a year later you are not hunting for which STAR version you 
 ```
 
 Versions are read from the installed tools at run time, not hardcoded, so the report describes
-the run that actually happened. Whatever you do downstream — expression filtering, the
-comparisons you test — is yours to add; the report stops where the pipeline does.
+the run that actually happened. Whatever you do downstream (expression filtering, the
+comparisons you test) is yours to add; the report stops where the pipeline does.
 </details>
 
 <details>
@@ -840,7 +842,7 @@ Processed/<project>/<group>/
 
 These are trimmed FASTQ and BAM files, so they are large: one to two times the raw data.
 They are **regenerated from the raw data and these scripts at any time**, so they are not
-backup material — delete them when disk runs short.
+backup material; delete them when disk runs short.
 
 ---
 
@@ -874,12 +876,12 @@ Why the pipeline looks the way it does. Read this before changing anything.
   notices.
 
 - **Derivable values are never asked for; underivable ones stop the run.** Read length, layout,
-  and species come from the data. Strandedness gets no silent default — an empty value is
+  and species come from the data. Strandedness gets no silent default: an empty value is
   refused.
 
 - **`sjdbOverhang` is computed from the data**: maximum read length after trimming, minus one.
   It is the length of sequence STAR places on each side of a splice junction when aligning
-  reads that cross one, and **every sample in a group must use the same value** — otherwise the
+  reads that cross one, and **every sample in a group must use the same value**, or the
   counts are not comparable.
 
 - **A STAR index is kept forever once built.** The next dataset needing the same overhang
@@ -909,7 +911,7 @@ MyNewKit,AGATCGGAAGAGCACACGTCT,AGATCGGAAGAGCGTCGTGTA
 You can find the adapter sequence in the kit manual or in the FastQC *Adapter Content* plot.
 `adapter_R2` is used only for paired-end data and ignored otherwise.
 
-**Strandedness does not belong in this file** — the kit name does not predict it (section 6).
+**Strandedness does not belong in this file**: the kit name does not predict it (section 6).
 
 ---
 
@@ -929,8 +931,8 @@ a script.
 
 ## 13. Running on SLURM
 
-The wrapper is a valid batch script as they are — the `#SBATCH` directives sit inside
-them, so `sbatch` needs no extra arguments.
+The wrapper is a valid batch script as it stands: the `#SBATCH` directives sit inside
+it, so `sbatch` needs no extra arguments.
 
 ```bash
 cd ~/BulkRNAseq_AutoPipeline      # submit from the repository root
@@ -960,7 +962,7 @@ Stage 2 scales almost linearly: `htseq-count` is single-threaded and CPU-bound, 
 more samples at once.
 
 **You do not also have to set `THREADS`.** The scripts read `SLURM_CPUS_PER_TASK`, so the
-tools use exactly what the job reserved — reserve less and they scale down with it.
+tools use exactly what the job reserved; reserve less and they scale down with it.
 
 Logs land in `logs/rnaseq_<jobid>.out`, timestamps included, so
 `tail -f` shows which step is running and what the previous one cost.
@@ -972,5 +974,5 @@ scancel <jobid>                   # SLURM kills the whole job, orphans and all
 
 **Steps are chained inside one job rather than across several.** Nothing needs `--dependency`:
 `run_pipeline.sh` is a single job running its steps in order, and `set -e` stops it at the
-first failure. The one place it can pause is the strandedness hold, and that ends the job —
-you record the value and submit again, which resumes rather than restarts.
+first failure. The one place it can pause is the strandedness hold, and that ends the job.
+You record the value and submit again, which resumes rather than restarts.
