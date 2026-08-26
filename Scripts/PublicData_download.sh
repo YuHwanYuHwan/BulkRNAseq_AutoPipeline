@@ -6,6 +6,10 @@
 #
 #   bash PublicData_download.sh rawData/ProjectA/GroupA SRR0000001 SRR0000002
 #   bash PublicData_download.sh rawData/ProjectA/GroupA srr_list.txt
+#
+#   The list file has no format: every SRR/ERR/DRR accession found anywhere in it is used,
+#   duplicates dropped. A plain list, a comma-separated line, or a whole SraRunTable.csv
+#   pasted in all work, so there is nothing to reformat before running this.
 set -euo pipefail
 
 RUNINFO_URL="https://trace.ncbi.nlm.nih.gov/Traces/sra-db-be/runinfo?acc="
@@ -18,9 +22,10 @@ command -v pigz >/dev/null 2>&1 && ZIP="pigz -p $THREADS" || ZIP="gzip"
 [ $# -ge 2 ] || { sed -n '2,7p' "$0"; exit 1; }
 
 GROUP_DIR="$1"; shift
-# A single file argument is read as a list of accessions
+# A single file argument is read as a list of accessions. Scraping them out rather than
+# parsing the file means a run table or a copied web page works without editing.
 if [ $# -eq 1 ] && [ -f "$1" ]; then
-    mapfile -t ACCS < <(grep -oE 'SRR[0-9]+' "$1")
+    mapfile -t ACCS < <(grep -oE '[SED]RR[0-9]+' "$1" | awk '!seen[$0]++')
 else
     ACCS=("$@")
 fi
@@ -85,7 +90,7 @@ cat <<MSG
   2. Write ${GROUP_DIR}/group.conf
 
          species      = Homo_sapiens     # must match a folder in reference_Genomes/
-         strandedness =                  # leave empty, stage 1 tells you what to put here
+         strandedness =                  # leave empty; the probe fills it in
 
   3. bash Scripts/run_pipeline.sh ${GROUP_DIR}
 MSG

@@ -343,6 +343,17 @@ If there are many, pass a file instead.
 bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA srr_list.txt
 ```
 
+**The file has no format.** Every `SRR`/`ERR`/`DRR` accession found anywhere in it is used and
+duplicates are dropped, so all of these are the same input:
+
+```
+SRR0000001          SRR0000001,SRR0000002,SRR0000003        Run,Assay Type,Bases
+SRR0000002                                                  SRR0000001,RNA-Seq,3042910600
+SRR0000003                                                  SRR0000002,RNA-Seq,1474362300
+```
+
+The last one is a run table saved straight from SRA Run Selector — nothing to clean up first.
+
 The script downloads the FASTQ files, compresses them, and **groups runs into a subfolder when
 several belong to one sample.**
 
