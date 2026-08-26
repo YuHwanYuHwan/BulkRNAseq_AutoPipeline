@@ -159,6 +159,7 @@ BulkRNAseq_Pipeline/
     ├── PublicData_download.sh              # SRR accessions -> FASTQ in a group folder
     ├── list_samples.sh                     # print what the pipeline sees in a group
     │
+    ├── run_all.sh                          # wrapper: both stages, stopping only if unsure
     ├── run_stage1.sh                       # wrapper: the four steps below
     ├── FastQC.sh                           #   1. read quality
     ├── Trimming.sh                         #   2. adapter removal
@@ -600,8 +601,21 @@ run separates all three cases:
 | Middle (~50%) | **`no`** | Half the reads sit on the other strand — no strand information |
 | High (80%+) | **`yes`** | Almost nothing was assigned — the direction was assumed backwards |
 
-The probe ends by printing the exact command to record your answer, with its own reading
-filled in — paste it, or edit the value first if you read the numbers differently:
+**An unambiguous result is written into `group.conf` and the run carries on.** The bands leave
+gaps between the three cases on purpose:
+
+| `__no_feature` under `-s reverse` | Decision |
+|---|---|
+| under 25% | `reverse`, written automatically |
+| 40–60% | `no`, written automatically |
+| over 75% | `yes`, written automatically |
+| anything else | **stops and waits for you** |
+
+A wrong strandedness raises no error — it quietly deflates every count — so a coin flip near a
+boundary is worse than an interruption. The old cut points touched at 35 and 65, which made
+34% and 36% different answers off a difference that means nothing.
+
+When it stops, the probe prints the command to record your own reading:
 
 ```
       sed -i 's/^strandedness.*/strandedness = no/' rawData/ProjectA/GroupA/group.conf
@@ -619,6 +633,16 @@ bash Scripts/run_stage2.sh rawData/ProjectA/GroupA
 ```
 
 HTSeq, count matrix, CPM, then MultiQC and the report.
+
+### Or run the whole thing at once
+
+```bash
+bash Scripts/run_all.sh rawData/ProjectA/GroupA        # or sbatch
+```
+
+Both stages back to back. It stops between them only when the probe could not call the
+strandedness, and tells you what to do next. `PROBE_AUTO=0` keeps the decision manual even
+when the result is clear-cut.
 
 If `strandedness` is still empty the run **refuses to start**, which beats burning hours on a
 wrong value.
