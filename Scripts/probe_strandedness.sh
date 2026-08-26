@@ -37,6 +37,11 @@ echo "$REPORT"
 
 AUTO=$(strand_call "$FRAC")
 
+# Keep the measurement, not just its conclusion. MultiQC.sh puts it in the report, so a matrix
+# read later still shows what the strandedness was decided on - and the numbers accumulate
+# across datasets, which is the only way these bands stop being a guess.
+echo "$FRAC" > "${PROC_DIR}/.strandprobe"
+
 # PROBE_AUTO=0 keeps the decision manual - the teaching setup uses that, because reading
 # the number is the point of the exercise.
 [ "${PROBE_AUTO:-1}" = 1 ] || AUTO=""

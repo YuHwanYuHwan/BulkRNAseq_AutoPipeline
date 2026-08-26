@@ -13,6 +13,14 @@ multiqc "$PROC_DIR" -o "$OUT_DIR" -n "${GROUP}_multiqc_report" -f -q
 GTF="$(ls "${REF_ROOT}/${species}"/*.gtf | head -1)"
 FA="$(ls "${REF_ROOT}/${species}"/*.dna.*.fa 2>/dev/null | head -1)"
 OVERHANG="$(cat "${PROC_DIR}/.overhang" 2>/dev/null || echo '?')"
+PROBE="$(cat "${PROC_DIR}/.strandprobe" 2>/dev/null || true)"
+# What the strandedness was decided on, kept next to the value it produced. Absent when
+# somebody set group.conf by hand without running the probe.
+if [ -n "$PROBE" ]; then
+    PROBE_LINE="one sample counted with -s reverse gave __no_feature ${PROBE}%"
+else
+    PROBE_LINE="set by hand, no probe on record"
+fi
 KIT="${adapter_kit:-Illumina_universal}"
 read -r A1 A2 < <(awk -F, -v k="$KIT" '$1==k { print $2, $3 }' "$(dirname "${BASH_SOURCE[0]}")/AdapterSequenceList.csv")
 SAMPLE_TSV=$(list_samples)
@@ -90,6 +98,7 @@ cat > "$REPORT" <<TXT
                 --outSAMtype BAM SortedByCoordinate
                 (annotation and sjdbOverhang ${OVERHANG} come from the index)
   HTSeq         -r pos -s ${strandedness}
+                evidence: ${PROBE_LINE}
   normalization edgeR TMM -> CPM
 
 [ QC summary ]
