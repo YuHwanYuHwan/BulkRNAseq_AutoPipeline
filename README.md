@@ -30,7 +30,7 @@ The green box is what this pipeline hands you. Everything after it is your analy
 3. [Adding your data](#3-adding-your-data)
 4. [Writing group.conf](#4-writing-groupconf)
 5. [Running stage 1](#5-running-stage-1)
-6. [Deciding strandedness — the one call you make yourself](#6-deciding-strandedness--the-one-call-you-make-yourself)
+6. [Strandedness — measured, and yours to settle when it is close](#6-strandedness--measured-and-yours-to-settle-when-it-is-close)
 7. [Running stage 2](#7-running-stage-2)
 8. [Reading the results](#8-reading-the-results)
 9. [Common errors](#9-common-errors)
@@ -448,7 +448,9 @@ person supplies it.
 bash Scripts/run_stage1.sh rawData/ProjectA/GroupA
 ```
 
-This runs FastQC, cutadapt, STAR, and the strandedness probe, in order.
+This runs FastQC, cutadapt, STAR, and the strandedness probe, in order. If the probe can
+call the strandedness it records it, so `run_all.sh` (section 7) carries straight on into
+stage 2 without asking.
 
 **It takes a long time.** Depending on sample count and sequencing depth, STAR alone is roughly
 20 minutes to an hour per sample, and the first run adds index building (1–2 hours) in front of
@@ -549,7 +551,7 @@ bash Scripts/probe_strandedness.sh rawData/ProjectA/GroupA
 
 ---
 
-## 6. Deciding strandedness — the one call you make yourself
+## 6. Strandedness — measured, and yours to settle when it is close
 
 ### What is being decided
 
@@ -566,11 +568,15 @@ the original RNA a read came from**. That is `strandedness`.
 genes, and you end up with a table whose expression values are uniformly deflated. That is why
 it gets checked before proceeding.
 
-### Why it is not decided automatically
+### Why it is measured rather than looked up
 
 Because the kit name does not predict it. Datasets exist that carry the name
 `SureSelect Strand Specific` and are nonetheless unstranded. Trusting the name means being
 wrong without noticing.
+
+So the pipeline counts one sample and reads the answer off the data. An unambiguous answer is
+recorded and the run carries on; one that lands between the cases stops and asks you. The line
+between those two is drawn deliberately wide.
 
 ### How to decide
 
@@ -592,37 +598,41 @@ That is a real run, and a good example of why the kit name is not the answer: th
 a poly-A prep from a vendor whose standard kit is directional, yet only half the reads land on
 the sense strand. The data says unstranded, so unstranded it is.
 
-`__no_feature` is the **fraction of reads that could not be assigned to any gene**. One reverse
-run separates all three cases:
-
-| `__no_feature` under `-s reverse` | Conclusion | Why |
-|---|---|---|
-| Low (~10–20%) | **`reverse`** | Reads were assigned; the assumption held |
-| Middle (~50%) | **`no`** | Half the reads sit on the other strand — no strand information |
-| High (80%+) | **`yes`** | Almost nothing was assigned — the direction was assumed backwards |
+`__no_feature` is the **fraction of reads that could not be assigned to any gene**, and one
+reverse run separates all three cases: reads were assigned, so the assumption held; half sit on
+the other strand, so there is no strand information; almost nothing was assigned, so the
+direction was backwards.
 
 **An unambiguous result is written into `group.conf` and the run carries on.** The bands leave
 gaps between the three cases on purpose:
 
-| `__no_feature` under `-s reverse` | Decision |
+| `__no_feature` under `-s reverse` | What happens |
 |---|---|
-| under 25% | `reverse`, written automatically |
-| 40–60% | `no`, written automatically |
-| over 75% | `yes`, written automatically |
-| anything else | **stops and waits for you** |
+| under 25% | `reverse` recorded, run continues |
+| 40–60% | `no` recorded, run continues |
+| over 75% | `yes` recorded, run continues |
+| **25–40% or 60–75%** | **stops with exit code 2 and asks you** |
 
-A wrong strandedness raises no error — it quietly deflates every count — so a coin flip near a
-boundary is worse than an interruption. The old cut points touched at 35 and 65, which made
-34% and 36% different answers off a difference that means nothing.
+The gaps are the point. Cut points that touch would make 34% and 36% different answers off a
+difference that means nothing, and a wrong strandedness never announces itself — it just
+deflates every count. Near a boundary an interruption beats a coin flip. Libraries that land in
+a gap tend to be the ones worth a second look: rRNA-depleted total RNA carries more intronic
+signal, a degraded sample assigns less of everything.
 
-When it stops, the probe prints the command to record your own reading:
+When it stops it prints the three commands and picks none of them:
 
 ```
-      sed -i 's/^strandedness.*/strandedness = no/' rawData/ProjectA/GroupA/group.conf
+  __no_feature 31.2% falls between the three cases, so nothing was written.
+  This is the call the pipeline will not make for you. Read the numbers above,
+  probe another sample if it helps, then record one of:
+
+      sed -i 's/^strandedness.*/strandedness = reverse/' rawData/ProjectA/GroupA/group.conf
+      sed -i 's/^strandedness.*/strandedness = no/'      rawData/ProjectA/GroupA/group.conf
+      sed -i 's/^strandedness.*/strandedness = yes/'     rawData/ProjectA/GroupA/group.conf
 ```
 
-> These thresholds are heuristics. If you land somewhere ambiguous, say 35%, probe another
-> sample. **The judgment is yours** — the pipeline offers a reading and writes nothing.
+`PROBE_AUTO=0` keeps every decision manual however clear the number is — for when the point is
+that someone reads it themselves rather than that a matrix appears quickly.
 
 ---
 
@@ -640,9 +650,12 @@ HTSeq, count matrix, CPM, then MultiQC and the report.
 bash Scripts/run_all.sh rawData/ProjectA/GroupA        # or sbatch
 ```
 
-Both stages back to back. It stops between them only when the probe could not call the
-strandedness, and tells you what to do next. `PROBE_AUTO=0` keeps the decision manual even
-when the result is clear-cut.
+Both stages back to back — the normal case now that a clear-cut probe records itself. It stops
+between them only on the hold, and says what to do next:
+
+```
+[HOLD] strandedness needs your call - see above, then: bash Scripts/run_stage2.sh rawData/ProjectA/GroupA
+```
 
 If `strandedness` is still empty the run **refuses to start**, which beats burning hours on a
 wrong value.

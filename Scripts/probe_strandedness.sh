@@ -31,14 +31,13 @@ TMP="${PROC_DIR}/.strand_probe.counts"
 htseq-count -r pos -s reverse "$BAM" "$GTF" > "$TMP"
 
 REPORT="$(strand_report "$TMP")"
+FRAC=$(awk -F'	' '/^__no_feature/ { nf=$2 } { t+=$2 } END { printf "%.1f", 100*nf/t }' "$TMP")
 rm -f "$TMP"
 echo "$REPORT"
-VERDICT="$(awk '/likely strandedness/ { print $5 }' <<< "$REPORT")"
 
 # Bands leave gaps on purpose. The old 35/65 cut points touched, so 34% and 36% got
 # different answers off a difference that means nothing. Data sitting in a gap - a
 # rRNA-depleted library, a degraded sample - is exactly what a person should look at.
-FRAC=$(awk '/__no_feature/ { gsub(/[()%]/,"",$4); print $4 }' <<< "$REPORT")
 AUTO=$(awk -v r="$FRAC" 'BEGIN {
     if      (r < 25)            print "reverse"
     else if (r >= 40 && r <= 60) print "no"
@@ -49,17 +48,27 @@ AUTO=$(awk -v r="$FRAC" 'BEGIN {
 # the number is the point of the exercise.
 [ "${PROBE_AUTO:-1}" = 1 ] || AUTO=""
 
+CONF="${GROUP_DIR}/group.conf"
 if [ -n "$AUTO" ]; then
-    sed -i "s/^strandedness.*/strandedness = $AUTO/" "${GROUP_DIR}/group.conf"
+    # The line is normally present and empty. A hand-written conf that left it out would
+    # make sed match nothing, and the value would silently never be recorded.
+    if grep -q "^strandedness" "$CONF"; then
+        sed -i "s/^strandedness.*/strandedness = $AUTO/" "$CONF"
+    else
+        echo "strandedness = $AUTO" >> "$CONF"
+    fi
     echo "  __no_feature ${FRAC}% is unambiguous -> strandedness = $AUTO, written to group.conf"
     echo
 else
     cat <<MSG
 
   __no_feature ${FRAC}% falls between the three cases, so nothing was written.
-  Read the numbers above and decide:
+  This is the call the pipeline will not make for you. Read the numbers above,
+  probe another sample if it helps, then record one of:
 
-      sed -i 's/^strandedness.*/strandedness = ${VERDICT}/' ${GROUP_DIR}/group.conf
+      sed -i 's/^strandedness.*/strandedness = reverse/' ${CONF}
+      sed -i 's/^strandedness.*/strandedness = no/'      ${CONF}
+      sed -i 's/^strandedness.*/strandedness = yes/'     ${CONF}
 
   Then run: bash Scripts/run_stage2.sh ${GROUP_DIR}
 MSG
