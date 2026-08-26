@@ -98,7 +98,7 @@ accumulate inside this folder, so put it somewhere with room to spare (several T
 
 ```bash
 cd ~
-git clone https://github.com/YuHwanYuHwan/BulkRNAseq_Pipeline.git
+git clone https://github.com/YuHwanYuHwan/BulkRNAseq_AutoPipeline.git
 cd BulkRNAseq_Pipeline
 ```
 
