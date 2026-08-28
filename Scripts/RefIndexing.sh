@@ -24,6 +24,15 @@ if [ -f "${IDX_DIR}/SAindex" ]; then
     exit 0
 fi
 
+# An index the caller cannot read looks exactly like an index that is not there. Shared
+# indexes are owned by whoever built them, so this is the ordinary case on a class machine,
+# and rebuilding 29 GB per user is the wrong answer to it.
+if [ -e "$IDX_DIR" ] && [ ! -r "$IDX_DIR" ]; then
+    echo "[ERROR] $IDX_DIR exists but is not readable by $(id -un)." >&2
+    echo "        Ask whoever owns it for: chmod -R a+rX $REF_ROOT" >&2
+    exit 1
+fi
+
 # Guard: a partial index from a killed run would be silently reused as valid.
 rm -rf "$IDX_DIR"
 mkdir -p "$IDX_DIR"
