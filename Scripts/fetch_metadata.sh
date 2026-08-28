@@ -21,20 +21,23 @@ OUT="${GROUP_DIR}/metadata.tsv"
 [ -s "$RUNINFO" ] || { echo "[ERROR] no $RUNINFO - run PublicData_download.sh first" >&2; exit 1; }
 
 # Run, SampleName, BioSample, BioProject - all of it already sits in runinfo
-RUNS=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) { if ($i=="Run") r=i; if ($i=="SampleName") s=i
+RUNS=$(tr -d '\r' < "$RUNINFO" | awk -F, 'NR==1 { for (i=1;i<=NF;i++) { if ($i=="Run") r=i; if ($i=="SampleName") s=i
                                               if ($i=="BioSample") b=i; if ($i=="BioProject") p=i }
                         next }
-                r { print $r "\t" $s "\t" $b "\t" $p }' "$RUNINFO")
+                r { print $r "\t" $s "\t" $b "\t" $p }')
 FIRST_SAMPLE=$(head -1 <<< "$RUNS" | cut -f2)
 
 RAW="${GROUP_DIR}/.geo_samples.txt"
 if [[ "$FIRST_SAMPLE" == GSM* ]]; then
     # One request for the whole series beats one per sample
+    # GEO serves this text with CRLF line endings. A carriage return riding along on the
+    # series id makes the next URL malformed, and curl fails with a code that says nothing
+    # about where it came from.
     SERIES=$(curl -sf "${GEO}?acc=${FIRST_SAMPLE}&targ=self&form=text&view=brief" |
-             awk -F' = ' '/^!Sample_series_id/ { print $2; exit }')
+             tr -d '\r' | awk -F' = ' '/^!Sample_series_id/ { print $2; exit }')
     [ -n "$SERIES" ] || { echo "[ERROR] no series for $FIRST_SAMPLE" >&2; exit 1; }
     echo "[GEO ] $SERIES"
-    curl -sf "${GEO}?acc=${SERIES}&targ=gsm&form=text&view=brief" > "$RAW"
+    curl -sf "${GEO}?acc=${SERIES}&targ=gsm&form=text&view=brief" | tr -d '\r' > "$RAW"
 else
     # Not a GEO submission: BioSample carries the same attributes, one fetch per sample.
     # Emitted in the GEO shape so the parser below does not need a second form.
