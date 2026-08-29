@@ -27,7 +27,7 @@ if [ -z "${NO_STEP_LOG:-}" ]; then
     printf '[%s] ==> %s\n' "$(date '+%F %T')" "$STEP"
     trap 'rc=$?; printf "[%s] <== %s  %02d:%02d:%02d%s\n" "$(date "+%F %T")" "$STEP" \
         $((SECONDS/3600)) $((SECONDS%3600/60)) $((SECONDS%60)) \
-        "$([ $rc -ne 0 ] && echo "  FAILED rc=$rc")"' EXIT
+        "$(case $rc in 0) ;; 2) echo "  HOLD - waiting for you" ;; *) echo "  FAILED rc=$rc" ;; esac)"' EXIT
 fi
 
 # group dir -> project/group relative path. Processed/ and Output/ mirror the same layout.

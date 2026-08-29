@@ -43,8 +43,10 @@ AUTO=$(strand_call "$FRAC")
 echo "$FRAC" > "${PROC_DIR}/.strandprobe"
 
 # PROBE_AUTO=0 keeps the decision manual - the teaching setup uses that, because reading
-# the number is the point of the exercise.
-[ "${PROBE_AUTO:-1}" = 1 ] || AUTO=""
+# the number is the point of the exercise. Which of the two reasons applies has to survive,
+# or a clear-cut number gets reported as an ambiguous one.
+MANUAL=0
+[ "${PROBE_AUTO:-1}" = 1 ] || { MANUAL=1; AUTO=""; }
 
 CONF="${GROUP_DIR}/group.conf"
 if [ -n "$AUTO" ]; then
@@ -58,9 +60,14 @@ if [ -n "$AUTO" ]; then
     echo "  __no_feature ${FRAC}% is unambiguous -> strandedness = $AUTO, written to group.conf"
     echo
 else
+    if [ "$MANUAL" = 1 ]; then
+        WHY="automatic recording is off (PROBE_AUTO=0), so nothing was written."
+    else
+        WHY="__no_feature ${FRAC}% falls between the three cases, so nothing was written."
+    fi
     cat <<MSG
 
-  __no_feature ${FRAC}% falls between the three cases, so nothing was written.
+  ${WHY}
   This is the call the pipeline will not make for you. Read the numbers above,
   probe another sample if it helps, then record one of:
 
