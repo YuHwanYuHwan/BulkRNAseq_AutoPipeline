@@ -122,8 +122,14 @@ if [ "$ALL_DIRS" = 1 ]; then
             ACCS_OF[$g]="$(scrape_accessions "${g}/accessions.csv" | paste -sd' ')"
             [ -n "${ACCS_OF[$g]}" ] || MISSING+=("${g}/accessions.csv holds no accession")
             GROUP_DIRS+=("$g")
+        elif [ -e "${g}/accessions.csv" ]; then
+            MISSING+=("${g}/accessions.csv is empty")
         else
-            MISSING+=("${g}/accessions.csv not found")
+            # Naming the near misses saves the next person the minutes it took to notice that
+            # accession.csv and accessions.csv are not the same file.
+            # || true: finding nothing is the ordinary case, not a reason to stop
+            near="$(ls "$g" 2>/dev/null | grep -i 'acc.*\.\(csv\|txt\|tsv\)$' | paste -sd' ' || true)"
+            MISSING+=("${g}/accessions.csv not found${near:+ (the folder holds: $near)}")
         fi
     done
     if [ ${#MISSING[@]} -gt 0 ]; then
