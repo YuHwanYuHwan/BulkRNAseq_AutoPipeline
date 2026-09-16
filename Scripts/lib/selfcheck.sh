@@ -5,7 +5,9 @@ set -uo pipefail
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 ROOT="$TMP/repo"; mkdir -p "$ROOT/Scripts/lib"
-cp "$(dirname "${BASH_SOURCE[0]}")/common.sh" "$ROOT/Scripts/lib/"
+LIB="$(dirname "${BASH_SOURCE[0]}")"
+cp "$LIB/common.sh" "$ROOT/Scripts/lib/"
+cp "$LIB/../PublicData_download.sh" "$ROOT/Scripts/"
 NO_STEP_LOG=1                                 # keep step timestamps out of the report
 source "$ROOT/Scripts/lib/common.sh"          # PIPELINE_ROOT now points at the fake repo
 
@@ -100,8 +102,22 @@ t_probe_verdict() {
     done
 }
 
+# Several groups at once means a typo in the last one must surface before the first download,
+# not twelve hours into the night. Runs without any tool installed: the refusal is reached
+# before prefetch is ever called.
+t_multigroup_preflight() {
+    local A="$ROOT/rawData/P/ga" B="$ROOT/rawData/P/gb" out
+    mkdir -p "$A" "$B"
+    printf 'SRR0000001\n' > "$A/accessions.csv"          # B deliberately has no list
+    out=$(bash "$ROOT/Scripts/PublicData_download.sh" "$A" "$B" 2>&1) &&
+        { echo "accepted a group with no accessions.csv"; return 1; }
+    grep -q 'accessions.csv not found' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
+    [ ! -e "$A/.SRR0000001.done" ] || { echo "downloaded before checking every group"; return 1; }
+    [ ! -e "$A/.runinfo.csv" ]     || { echo "hit the network before checking every group"; return 1; }
+}
+
 PASS=0; FAIL=0
-for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict; do
+for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_multigroup_preflight; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi
 done

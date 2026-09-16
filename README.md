@@ -335,9 +335,10 @@ treated samples belong in the same group; an unrelated experiment gets its own g
 
 ### Option A. Public data (GEO/SRA)
 
-Make the group folder, put the accessions in a file called `accessions.csv` inside it, and hand
-that file to the download script. Keeping the list next to the data is the point: a year later
-the folder still says which runs it was built from.
+Make the group folder, put the accessions in a file called `accessions.csv` inside it, and give
+the download script the folder. Keeping the list next to the data is the point: a year later the
+folder still says which runs it was built from, and the script knows where to look without being
+told twice.
 
 ```bash
 mkdir -p rawData/ProjectA/GroupA
@@ -348,7 +349,7 @@ SRR0000002
 SRR0000003
 EOF
 
-bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupA/accessions.csv
+bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA
 ```
 
 **The file has no format.** Every `SRR`/`ERR`/`DRR` accession found anywhere in it is used and
@@ -374,6 +375,35 @@ A handful of runs needs no file at all:
 bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA SRR0000001 SRR0000002
 ```
 
+### Several groups in one command
+
+Give it more than one folder and it works through them in order, each reading its own
+`accessions.csv`. Downloading is the slow part of this pipeline, so this is mainly a way to set
+up an evening of it and stop waiting for one group to finish before starting the next.
+
+```bash
+bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA                                     rawData/ProjectA/GroupB                                     rawData/ProjectB/GroupA
+```
+
+Every list is read and checked before anything is downloaded, so a folder with no
+`accessions.csv` stops the command immediately rather than twelve hours later.
+
+Once it is running, a failure costs one run rather than the whole command. A run that fails is
+reported and skipped, the rest continue, and no `.done` flag is written for it. Re-running the
+same command retries exactly those runs, because every finished one is skipped. The command
+exits non-zero when anything failed, and lists what to look at:
+
+```
+[DONE] 3 group(s), 43 run(s)
+
+[FAIL] rawData/ProjectA/GroupB/SRR0000017
+       Re-run the same command: finished runs are skipped, only these are retried.
+```
+
+Downloading needs internet access, which on a cluster usually means the login node rather than a
+compute node. A long run survives a dropped connection if you start it under `nohup` or in a
+`tmux` session.
+
 The script downloads the FASTQ files, compresses them, **groups runs into a subfolder when
 several belong to one sample**, and then collects the sample metadata.
 
@@ -387,8 +417,10 @@ not your metadata; ignore it.
 
 runinfo says which sample a run belongs to and nothing about what the sample *is*. The
 conditions live in GEO, or in BioSample for submissions that never went through GEO, so
-`fetch_metadata.sh` reads them from there and joins on the sample accession. It runs at the end
-of the download, and can be run again on its own:
+`fetch_metadata.sh` reads them from there and joins on the sample accession. It runs once all
+the downloading is finished, so a hiccup at GEO ends up at the bottom of the log where you will
+see it instead of somewhere in the middle of a run that carried on for hours. It can also be run
+again on its own:
 
 ```bash
 bash Scripts/fetch_metadata.sh rawData/ProjectA/GroupA

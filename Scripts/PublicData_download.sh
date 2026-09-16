@@ -1,9 +1,16 @@
 #!/bin/bash
-# PublicData_download.sh <group_dir> <SRR ...>
+# PublicData_download.sh <group_dir> [<group_dir> ...]
+#                        <group_dir> <SRR ...>
+#                        <group_dir> <list file>
 #   Downloads raw FASTQ for a list of SRR accessions into the group folder.
 #   Runs sharing a SampleName go into a subfolder, which marks them as one sample to merge.
 #   Sample metadata is collected afterwards by fetch_metadata.sh.
 #
+#   Several group directories can be given at once. Each is expected to hold its own
+#   accessions.csv, and they are downloaded one after another, so a night of groups is one
+#   command instead of one command per group waited out in turn.
+#
+#   bash PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
 #   bash PublicData_download.sh rawData/ProjectA/GroupA SRR0000001 SRR0000002
 #   bash PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupA/accessions.csv
 #
@@ -19,90 +26,155 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 # same format on N cores; plain gzip stays the fallback.
 command -v pigz >/dev/null 2>&1 && ZIP="pigz -p $THREADS" || ZIP="gzip"
 
-[ $# -ge 2 ] || { sed -n '2,7p' "$0"; exit 1; }
+[ $# -ge 1 ] || { sed -n '2,13p' "$0"; exit 1; }
 
-GROUP_DIR="$1"; shift
-# A single file argument is read as a list of accessions. Scraping them out rather than
-# parsing the file means a run table or a copied web page works without editing.
-if [ $# -eq 1 ] && [ -f "$1" ]; then
-    mapfile -t ACCS < <(grep -oE '[SED]RR[0-9]+' "$1" | awk '!seen[$0]++')
+# Every accession found anywhere in a file, duplicates dropped. Scraping rather than parsing
+# means a run table or a copied web page works without editing.
+scrape_accessions() { grep -oE '[SED]RR[0-9]+' "$1" | awk '!seen[$0]++'; }
+
+# One run, start to finished .fastq.gz. Returns non-zero instead of aborting: over a night of
+# downloads a single expired link or a blip at NCBI must cost that run, not the other forty.
+get_run() {   # $1=dest  $2=accession
+    prefetch --output-directory "$1" "$2" >/dev/null &&
+    fasterq-dump --split-3 --threads "$THREADS" --outdir "$1" "${1}/${2}" >/dev/null &&
+    $ZIP -f "$1"/"$2"*.fastq
+}
+
+download_group() {   # $1=group_dir, rest=accessions
+    local GROUP_DIR="$1"; shift
+    local ACCS=("$@") acc sample dest n
+    mkdir -p "$GROUP_DIR"
+
+    # -- 1. runinfo ---------------------------------------------------------
+    # runinfo is machinery, not the user's metadata: it exists only to group runs by sample.
+    # The conditions (tissue, treatment, donor) are not in it - fetch_metadata.sh gets those.
+    # The endpoint takes a comma-separated list, so this is one request rather than one per run.
+    local META="${GROUP_DIR}/.runinfo.csv"
+    curl -sf "${RUNINFO_URL}$(IFS=,; echo "${ACCS[*]}")" > "$META" || true
+    [ -s "$META" ] || { echo "[ERROR] runinfo lookup failed for $GROUP_DIR" >&2; return 1; }
+    echo "[INFO] runinfo: $(( $(wc -l < "$META") - 1 )) runs"
+
+    # -- 1b. group.conf -----------------------------------------------------
+    # The species is in runinfo, so for public data there is nothing left for a person to type.
+    # Written only when the file is absent - a conf you edited is never overwritten. A group
+    # holding more than one organism gets nothing: a mistake to look at, not to guess past.
+    local CONF="${GROUP_DIR}/group.conf" SPECIES
+    if [ ! -f "$CONF" ]; then
+        SPECIES=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) if ($i=="ScientificName") c=i; next }
+                           c { print $c }' "$META" | sort -u | tr ' ' '_')
+        if [ "$(wc -l <<< "$SPECIES")" -eq 1 ] && [ -n "$SPECIES" ]; then
+            { echo "species      = $SPECIES"; echo "strandedness ="; } > "$CONF"
+            echo "[CONF] species = $SPECIES"
+            [ -d "${REF_ROOT}/${SPECIES}" ] ||
+                echo "[WARN] no ${REF_ROOT}/${SPECIES} yet - download that genome before running the pipeline"
+        else
+            echo "[WARN] could not settle on one organism - write $CONF yourself"
+        fi
+    fi
+
+    # -- 2. acc -> SampleName map, one pass. Samples with >1 run go into a subfolder.
+    local -A SAMPLE_OF MULTI count
+    while IFS=$'\t' read -r acc sample; do
+        SAMPLE_OF[$acc]="$sample"
+        n=$(( ${count[$sample]:-0} + 1 )); count[$sample]=$n
+        if [ "$n" -gt 1 ]; then MULTI[$sample]=1; fi
+    done < <(awk -F, '
+        NR==1 { for (i=1;i<=NF;i++) if ($i=="SampleName") c=i; next }
+        c { print $1 "\t" $c }' "$META")
+
+    # -- 3. download --------------------------------------------------------
+    for acc in "${ACCS[@]}"; do
+        sample="${SAMPLE_OF[$acc]:-$acc}"
+        dest="$GROUP_DIR"
+        [ -n "${MULTI[$sample]:-}" ] && dest="${GROUP_DIR}/${sample}"   # multi-run -> merge folder
+        mkdir -p "$dest"
+
+        if is_done "$dest" "$acc"; then echo "[SKIP] $acc"; continue; fi
+        echo "[GET ] $acc -> $dest"
+        if get_run "$dest" "$acc"; then
+            rm -rf "${dest:?}/${acc}"
+            mark_done "$dest" "$acc"
+        else
+            # No .done flag and no half-written FASTQ left behind, so re-running the same
+            # command picks up exactly the runs that failed.
+            rm -rf "${dest:?}/${acc}"; rm -f "${dest}/${acc}"*.fastq
+            echo "[FAIL] $acc" >&2
+            FAILED+=("${GROUP_DIR}/${acc}")
+        fi
+    done
+}
+
+# -- argument dispatch ------------------------------------------------------
+# All arguments existing directories -> a list of groups, each reading its own accessions.csv.
+# Anything else is the single-group form, where the rest of the line is accessions or a file.
+ALL_DIRS=1
+for a in "$@"; do [ -d "$a" ] || { ALL_DIRS=0; break; }; done
+
+# Not GROUPS: bash keeps that name for the caller's group ids, and assigning to it fails
+# silently - taking the rest of the line down with it.
+declare -a GROUP_DIRS=() FAILED=() META_FAILED=() MISSING=()
+declare -A ACCS_OF=()
+if [ "$ALL_DIRS" = 1 ]; then
+    # Every list is read and checked before a single byte is downloaded. A typo in the last
+    # group is worth knowing about now, not twelve hours from now.
+    for g in "$@"; do
+        if [ -s "${g}/accessions.csv" ]; then
+            ACCS_OF[$g]="$(scrape_accessions "${g}/accessions.csv" | paste -sd' ')"
+            [ -n "${ACCS_OF[$g]}" ] || MISSING+=("${g}/accessions.csv holds no accession")
+            GROUP_DIRS+=("$g")
+        else
+            MISSING+=("${g}/accessions.csv not found")
+        fi
+    done
+    if [ ${#MISSING[@]} -gt 0 ]; then
+        printf '[ERROR] %s\n' "${MISSING[@]}" >&2
+        echo "        nothing was downloaded" >&2
+        exit 1
+    fi
 else
-    ACCS=("$@")
-fi
-[ ${#ACCS[@]} -gt 0 ] || { echo "[ERROR] no accession given"; exit 1; }
-
-mkdir -p "$GROUP_DIR"
-# runinfo is machinery, not the user's metadata: it exists only to group runs by sample.
-# The conditions (tissue, treatment, donor) are not in it - the user fetches those separately.
-META="${GROUP_DIR}/.runinfo.csv"
-
-# -- 1. runinfo -------------------------------------------------------------
-# The endpoint takes a comma-separated list, so this is one request rather than one per run
-curl -sf "${RUNINFO_URL}$(IFS=,; echo "${ACCS[*]}")" > "$META"
-[ -s "$META" ] || { echo "[ERROR] runinfo lookup failed"; exit 1; }
-echo "[INFO] runinfo: $(( $(wc -l < "$META") - 1 )) runs"
-SRP=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) if ($i=="SRAStudy") c=i; next } c { print $c; exit }' "$META")
-
-# -- 1b. group.conf ---------------------------------------------------------
-# The species is in runinfo, so for public data there is nothing left for a person to type.
-# Written only when the file is absent - a conf you edited is never overwritten. A group
-# holding more than one organism gets nothing: that is a mistake to look at, not to guess past.
-CONF="${GROUP_DIR}/group.conf"
-if [ ! -f "$CONF" ]; then
-    SPECIES=$(awk -F, 'NR==1 { for (i=1;i<=NF;i++) if ($i=="ScientificName") c=i; next }
-                       c { print $c }' "$META" | sort -u | tr ' ' '_')
-    if [ "$(wc -l <<< "$SPECIES")" -eq 1 ] && [ -n "$SPECIES" ]; then
-        { echo "species      = $SPECIES"; echo "strandedness ="; } > "$CONF"
-        echo "[CONF] species = $SPECIES"
-        [ -d "${REF_ROOT}/${SPECIES}" ] ||
-            echo "[WARN] no ${REF_ROOT}/${SPECIES} yet - download that genome before running the pipeline"
-    else
-        echo "[WARN] could not settle on one organism - write $CONF yourself"
-    fi
+    [ $# -ge 2 ] || { sed -n '2,13p' "$0"; exit 1; }
+    g="$1"; shift
+    if [ $# -eq 1 ] && [ -f "$1" ]; then ACCS_OF[$g]="$(scrape_accessions "$1" | paste -sd' ')"
+    else ACCS_OF[$g]="$*"; fi
+    [ -n "${ACCS_OF[$g]}" ] || { echo "[ERROR] no accession given" >&2; exit 1; }
+    GROUP_DIRS+=("$g")
 fi
 
-# ── 2. acc -> SampleName map, one pass. Samples with >1 run go into a subfolder.
-declare -A SAMPLE_OF MULTI count
-while IFS=$'	' read -r acc smp; do
-    SAMPLE_OF[$acc]="$smp"
-    n=$(( ${count[$smp]:-0} + 1 )); count[$smp]=$n
-    if [ "$n" -gt 1 ]; then MULTI[$smp]=1; fi
-done < <(awk -F, '
-    NR==1 { for (i=1;i<=NF;i++) if ($i=="SampleName") c=i; next }
-    c { print $1 "	" $c }' "$META")
-
-# -- 3. download ------------------------------------------------------------
-for acc in "${ACCS[@]}"; do
-    sample="${SAMPLE_OF[$acc]:-$acc}"
-    dest="${GROUP_DIR}"
-    [ -n "${MULTI[$sample]:-}" ] && dest="${GROUP_DIR}/${sample}"   # multi-run -> merge folder
-    mkdir -p "$dest"
-
-    if [ -f "${dest}/.${acc}.done" ]; then
-        echo "[SKIP] $acc"
-        continue
-    fi
-    echo "[GET ] $acc -> $dest"
-    prefetch --output-directory "$dest" "$acc" >/dev/null
-    fasterq-dump --split-3 --threads "$THREADS" --outdir "$dest" "${dest}/${acc}" >/dev/null
-    rm -rf "${dest:?}/${acc}"
-    $ZIP -f "${dest}"/${acc}*.fastq
-    touch "${dest}/.${acc}.done"
+TOTAL=0
+for g in "${GROUP_DIRS[@]}"; do
+    echo "[GROUP] $g"
+    read -ra accs <<< "${ACCS_OF[$g]}"
+    TOTAL=$((TOTAL + ${#accs[@]}))
+    download_group "$g" "${accs[@]}" || FAILED+=("$g (runinfo)")
 done
 
-bash "$(dirname "${BASH_SOURCE[0]}")/fetch_metadata.sh" "$GROUP_DIR" ||     echo "[WARN] metadata fetch failed - rerun Scripts/fetch_metadata.sh $GROUP_DIR"
+# Metadata last, not after each group: a GEO hiccup then sits at the end of the log where you
+# will see it, instead of scrolled past in the middle of a run that kept going for hours.
+for g in "${GROUP_DIRS[@]}"; do
+    bash "$(dirname "${BASH_SOURCE[0]}")/fetch_metadata.sh" "$g" || META_FAILED+=("$g")
+done
+
+echo
+echo "[DONE] ${#GROUP_DIRS[@]} group(s), $TOTAL run(s)"
+printf '       %s\n' "${GROUP_DIRS[@]}"
+
+if [ ${#FAILED[@]} -gt 0 ] || [ ${#META_FAILED[@]} -gt 0 ]; then
+    echo
+    [ ${#FAILED[@]}      -eq 0 ] || printf '[FAIL] %s\n' "${FAILED[@]}" >&2
+    [ ${#META_FAILED[@]} -eq 0 ] || printf '[FAIL] metadata: %s\n' "${META_FAILED[@]}" >&2
+    echo "       Re-run the same command: finished runs are skipped, only these are retried." >&2
+    exit 1
+fi
 
 cat <<MSG
 
-[DONE] ${#ACCS[@]} runs -> $GROUP_DIR
+  Next steps, once per group:
 
-  Next steps:
-
-  1. Look at ${GROUP_DIR}/metadata.tsv and decide which samples are which.
+  1. Look at <group>/metadata.tsv and decide which samples are which.
      The pipeline does not read it; you do, to tell the count-matrix columns apart.
 
-  2. ${GROUP_DIR}/group.conf is written for you, with the species taken from runinfo.
+  2. <group>/group.conf is written for you, with the species taken from runinfo.
      Nothing else needs filling in - the probe records the strandedness itself.
 
-  3. bash Scripts/run_pipeline.sh ${GROUP_DIR}
+  3. bash Scripts/run_pipeline.sh ${GROUP_DIRS[0]}
 MSG
