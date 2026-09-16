@@ -14,6 +14,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 GEO="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi"
 EUTILS="https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
+# NCBI answers three requests a second and 429s the fourth, and the BioSample path makes two
+# requests per sample. Pausing costs seconds over a run; one refused request used to cost the
+# whole table, because curl -sf reports it as a failure and the script stops on those.
+eutils() {   # $1 = everything after the endpoint
+    local try out
+    for try in 1 2 3; do
+        sleep 0.4
+        out=$(curl -sf "${EUTILS}/$1") && { printf '%s' "$out"; return 0; }
+    done
+    return 1
+}
+
 [ $# -eq 1 ] || { sed -n '2,3p' "$0"; exit 1; }
 GROUP_DIR="$1"
 RUNINFO="${GROUP_DIR}/.runinfo.csv"
@@ -43,20 +55,23 @@ else
     # Emitted in the GEO shape so the parser below does not need a second form.
     echo "[BIOS] $FIRST_SAMPLE is not a GSM - reading BioSample instead"
     : > "$RAW"
+    missed=0
     while IFS=$'\t' read -r run smp bios proj; do
         [ -n "$bios" ] || continue
-        uid=$(curl -sf "${EUTILS}/esearch.fcgi?db=biosample&term=${bios}" |
-              grep -oE '<Id>[0-9]+' | head -1 | cut -d'>' -f2)
-        [ -n "$uid" ] || continue
-        curl -sf "${EUTILS}/efetch.fcgi?db=biosample&id=${uid}&rettype=full&retmode=xml" |
+        uid=$(eutils "esearch.fcgi?db=biosample&term=${bios}" |
+              grep -oE '<Id>[0-9]+' | head -1 | cut -d'>' -f2) || true
+        [ -n "$uid" ] || { echo "[WARN] no BioSample record for $bios" >&2; missed=$((missed+1)); continue; }
+        eutils "efetch.fcgi?db=biosample&id=${uid}&rettype=full&retmode=xml" |
         awk -v s="$bios" '
             BEGIN { print "^SAMPLE = " s }
             /<Title>/    { t=$0; gsub(/.*<Title>|<\/Title>.*/,"",t); print "!Sample_title = " t }
             /attribute_name=/ {
                 k=$0; gsub(/.*attribute_name="/,"",k); gsub(/".*/,"",k)
                 v=$0; gsub(/.*>/,"",v); gsub(/<.*/,"",v)
-                if (v != "") print "!Sample_characteristics_ch1 = " k ": " v }' >> "$RAW"
+                if (v != "") print "!Sample_characteristics_ch1 = " k ": " v }' >> "$RAW" ||
+            { echo "[WARN] could not read the record for $bios" >&2; missed=$((missed+1)); }
     done <<< "$RUNS"
+    [ "$missed" -eq 0 ] || echo "[WARN] $missed sample(s) have no attributes below; re-running fills them in" >&2
 fi
 [ -s "$RAW" ] || { echo "[ERROR] no metadata retrieved" >&2; exit 1; }
 
