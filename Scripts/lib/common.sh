@@ -17,7 +17,12 @@ FASTQC_BIN="${FASTQC_BIN:-fastqc}"
 # config.sh - asking for 32 cores and then using 8 wastes the other 24, and using more than
 # reserved fights the cgroup. Outside a job, config.sh wins, which is how you stay polite on a
 # shared head node; nproc is the last resort.
-THREADS="${SLURM_CPUS_PER_TASK:-${THREADS:-$(nproc)}}"
+#
+# SLURM_CPUS_ON_NODE sits between them because SLURM_CPUS_PER_TASK is only set for a job that
+# asked with --cpus-per-task. Ask with --ntasks instead and it is empty, and nproc would then
+# report every core on the machine rather than the few the job was given: a one-core
+# reservation quietly running 128 threads.
+THREADS="${SLURM_CPUS_PER_TASK:-${SLURM_CPUS_ON_NODE:-${THREADS:-$(nproc)}}}"
 
 # Every step stamps its own start and end, so a stage log reads as a timeline and a slow step
 # is obvious without instrumenting anything. The EXIT trap fires on failure too.

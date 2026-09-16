@@ -208,6 +208,7 @@ BulkRNAseq_AutoPipeline/
 │
 └── Scripts/                                # in the order they run
     ├── PublicData_download.sh              # SRR accessions -> FASTQ in a group folder
+    ├── submit_groups.sh                    # spread groups over a cluster's nodes, one job each
     ├── fetch_metadata.sh                   # GEO / BioSample -> metadata.tsv
     ├── list_samples.sh                     # print what the pipeline sees in a group
     │
@@ -1038,7 +1039,8 @@ bash Scripts/lib/selfcheck.sh    # logic only
 ```
 
 This exercises sample scanning, merge grouping, `group.conf` parsing, overhang computation,
-matrix assembly, and probe interpretation. **It runs with no bioinformatics tool installed**,
+matrix assembly, probe interpretation, the refusal to start a download when a group has no
+accession list, a held group not stopping the groups after it, and the split across nodes. **It runs with no bioinformatics tool installed**,
 so you can verify the code right after cloning, and use it as a regression check after editing
 a script.
 
@@ -1055,15 +1057,16 @@ sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA
 squeue -u $USER
 ```
 
-> Submit from the repository root. The log path in the directives is relative
+> Submit from the repository root. The job log path in the directives is relative
 > (`logs/rnaseq_%j.out`), so submitting from elsewhere leaves the job nowhere to write and it
-> fails before running anything.
+> fails before running anything. The per-group logs are not affected: those paths are worked
+> out at run time from the group directory, and are absolute.
 
 What the wrapper reserves:
 
 | Script | Cores | Memory | Why |
 |---|---|---|---|
-| `run_pipeline.sh` | 32 | 96 GB | STAR needs a 30 GB index in memory, and building one wants 32 GB+ on its own |
+| `run_pipeline.sh` | 32 | 96 GB | STAR holds a 30 GB index in memory, and building one wants 32 GB+ on its own |
 
 Override per submission when a dataset is unusually large or the queue is busy; the command
 line beats the directives in the file:
@@ -1072,15 +1075,18 @@ line beats the directives in the file:
 sbatch --cpus-per-task=16 --mem=48G Scripts/run_pipeline.sh rawData/ProjectA/GroupA
 ```
 
-Stage 2 scales almost linearly: `htseq-count` is single-threaded and CPU-bound, measured at
+Counting scales almost linearly: `htseq-count` is single-threaded and CPU-bound, measured at
 ~23,000 read pairs per second whether one or four run side by side. Reserving more cores counts
-more samples at once.
+more samples at once. Alignment does not behave the same way, which matters as soon as you run
+more than one group at a time (below).
 
 **You do not also have to set `THREADS`.** The scripts read `SLURM_CPUS_PER_TASK`, so the
-tools use exactly what the job reserved; reserve less and they scale down with it.
+tools use exactly what the job reserved; reserve less and they scale down with it. Reserve with
+`--cpus-per-task`, though, not `--ntasks`: nothing sets `SLURM_CPUS_PER_TASK` for a job that
+asked for tasks instead of cores.
 
-Logs land in `logs/rnaseq_<jobid>.out`, timestamps included, so
-`tail -f` shows which step is running and what the previous one cost.
+Logs land in `logs/rnaseq_<jobid>.out`, timestamps included, so `tail -f` shows which step is
+running and what the previous one cost. Each group also gets its own copy (see below).
 
 ```bash
 tail -f logs/rnaseq_*.out
@@ -1088,6 +1094,74 @@ scancel <jobid>                   # SLURM kills the whole job, orphans and all
 ```
 
 **Steps are chained inside one job rather than across several.** Nothing needs `--dependency`:
-`run_pipeline.sh` is a single job running its steps in order, and `set -e` stops it at the
-first failure. The one place it can pause is the strandedness hold, and that ends the job.
-You record the value and submit again, which resumes rather than restarts.
+each group runs its steps in order within the job, and a step that fails ends that group.
+
+### Several groups in one job
+
+Named together, the groups run one after another inside a single job:
+
+```bash
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
+```
+
+A group that fails, or that stops for you to settle its strandedness, does not stop the ones
+after it. The job ends with a summary, exiting 1 if anything failed and 2 if anything is only
+waiting for you, and every group keeps its own log at
+`logs/<Project>_<Group>_<jobid>.log`.
+
+### More than one node
+
+Two nodes will run two groups in the time one node runs one, and running them on separate
+nodes is better than running them side by side on the same one. Counting does not care, but
+alignment is limited by memory bandwidth rather than cores, so two STAR processes sharing a
+node share that bandwidth. Two nodes have their own.
+
+Hand the groups to `submit_groups.sh` and it deals them out, one job per node:
+
+```bash
+bash Scripts/submit_groups.sh rawData/ProjectA/*/
+```
+
+```
+[NODE] node01 <- ProjectA/GroupA ProjectA/GroupC ProjectA/GroupE
+[NODE] node02 <- ProjectA/GroupB ProjectA/GroupD
+Submitted batch job 41
+Submitted batch job 42
+```
+
+Each job then works through its own list in order, so every node runs one group at a time. The
+groups are dealt out in turn rather than cut in half, since neighbouring groups tend to be the
+ones most alike in size. Nodes come from `sinfo`; `NODES="node01 node02"` overrides that, and
+`SBATCH_OPTS` passes anything else through:
+
+```bash
+NODES="node02" SBATCH_OPTS="-c 16 --mem=48G" bash Scripts/submit_groups.sh rawData/P/A rawData/P/B
+```
+
+It pins each job with `-w`, which fixes where the job runs and nothing else, so the rest of
+every node stays available to whoever else is on the cluster.
+
+What it cannot do is react: the split is decided at submission, so if one lane turns out to
+hold the heavy groups, its node finishes late while the other sits idle. On a cluster you have
+to yourself, one job per group balances itself instead, because the scheduler starts the next
+group as soon as a node frees up:
+
+```bash
+for g in rawData/P/*/; do sbatch --exclusive Scripts/run_pipeline.sh "$g"; done
+```
+
+`--exclusive` is doing the work there. Without it the scheduler packs jobs onto the first node
+with free cores, which puts them back on one node and undoes the point. It also holds the whole
+node for a job that asked for 32 cores, which is why this one is for an empty cluster.
+
+Before relying on either, check how your cluster accounts for memory:
+
+```bash
+scontrol show config | grep -i SelectTypeParameters
+```
+
+`CR_Core_Memory` schedules memory as well as cores, so an over-generous `--mem` directly limits
+how many jobs fit on a node. `CR_CORE` schedules cores alone: jobs are packed by core count
+while their memory requests are free to add up past what the node has, and `cgroup.conf` then
+enforces each one individually. On such a cluster the reservations look like they fit right up
+until something is killed, so keep `--mem` near what the run actually uses.

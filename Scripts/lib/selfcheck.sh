@@ -144,9 +144,38 @@ t_pipeline_multigroup() {
     grep -q 'nothing was run' <<< "$out"   || { echo "unhelpful message: $out"; return 1; }
 }
 
+# Dealing groups out to nodes. SUBMIT=echo stands in for sbatch, so this runs with no
+# scheduler present and checks the split rather than the submission.
+t_submit_split() {
+    local R="$TMP/repo3" out n
+    mkdir -p "$R/Scripts"
+    cp "$LIB/../submit_groups.sh" "$R/Scripts/"
+    for n in a b c d e; do mkdir -p "$R/rawData/P/$n"; done
+
+    out=$(cd "$R" && SUBMIT=echo NODES="node01 node02" \
+          bash Scripts/submit_groups.sh rawData/P/a rawData/P/b rawData/P/c rawData/P/d rawData/P/e 2>&1) \
+        || { echo "split failed: $out"; return 1; }
+    # round robin over two nodes: a c e | b d
+    grep -qE '^-w node01 Scripts/run_pipeline.sh .*/P/a .*/P/c .*/P/e$' <<< "$out" ||
+        { echo "node01 lane wrong: $out"; return 1; }
+    grep -qE '^-w node02 Scripts/run_pipeline.sh .*/P/b .*/P/d$' <<< "$out" ||
+        { echo "node02 lane wrong: $out"; return 1; }
+    [ "$(grep -c '^-w ' <<< "$out")" -eq 2 ] || { echo "expected 2 submissions: $out"; return 1; }
+
+    # More nodes than groups must not submit an empty job.
+    out=$(cd "$R" && SUBMIT=echo NODES="node01 node02 node03" \
+          bash Scripts/submit_groups.sh rawData/P/a 2>&1)
+    [ "$(grep -c '^-w ' <<< "$out")" -eq 1 ] || { echo "empty lane submitted: $out"; return 1; }
+
+    # A path outside rawData/ has no pipeline behind it, and nothing should be submitted.
+    out=$(cd "$R" && SUBMIT=echo NODES="node01" bash Scripts/submit_groups.sh "$TMP" 2>&1) &&
+        { echo "accepted a path outside rawData/"; return 1; }
+    grep -q 'not under a pipeline' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
+}
+
 PASS=0; FAIL=0
 for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict \
-         t_multigroup_preflight t_pipeline_multigroup; do
+         t_multigroup_preflight t_pipeline_multigroup t_submit_split; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi
 done
