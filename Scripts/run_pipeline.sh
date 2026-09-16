@@ -16,7 +16,7 @@
 #
 #   NODES  nodes to deal the groups out to. Default: every node sinfo reports.
 #SBATCH --job-name=rnaseq
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=64
 #SBATCH --mem=64G
 #SBATCH --output=logs/rnaseq_%j.out
 set -euo pipefail

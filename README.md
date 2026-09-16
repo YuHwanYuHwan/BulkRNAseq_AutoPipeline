@@ -1066,12 +1066,14 @@ What the wrapper reserves:
 
 | Script | Cores | Memory | Why |
 |---|---|---|---|
-| `run_pipeline.sh` | 32 | 64 GB | STAR holds a 30 GB index in memory. Measured peak on a human dataset was 28 GB, so this is about twice what the run used |
+| `run_pipeline.sh` | 64 | 64 GB | Half of a 128-core node. `htseq-count` counts one sample per core, so cores are throughput; STAR gains less per core but still gains |
+| | | | STAR holds a 30 GB index in memory. Measured peak on a human dataset was 28 GB, so the reservation is about twice what the run used, and it barely moves with the core count |
 
-**These are the numbers the machines here use, not numbers that suit every cluster.** Edit the
-`#SBATCH` lines for your own: a node with fewer cores wants fewer than 32, and a genome larger
-than human wants more than 64 GB. Whether over-asking costs you anything depends on how the
-cluster schedules memory, which the end of this section explains.
+**These are the numbers for the machines this was written on: 128-core nodes with 500 GB or
+more.** Edit the `#SBATCH` lines for yours. As a starting point, take a fraction of a node you
+are willing to hold for hours, and leave memory at roughly twice the index: 64 GB covers a
+human genome, and a larger one wants more. Reserving far more memory than a run uses is not
+always free, which the end of this section explains.
 
 Override per submission when a dataset is unusually large or the queue is busy; the command
 line beats the directives in the file:
@@ -1079,6 +1081,9 @@ line beats the directives in the file:
 ```bash
 sbatch --cpus-per-task=16 --mem=48G Scripts/run_pipeline.sh rawData/ProjectA/GroupA
 ```
+
+Reserving a smaller share also starts sooner on a busy cluster, which for a single group is
+often worth more than the cores.
 
 Counting scales almost linearly: `htseq-count` is single-threaded and CPU-bound, measured at
 ~23,000 read pairs per second whether one or four run side by side. Reserving more cores counts
