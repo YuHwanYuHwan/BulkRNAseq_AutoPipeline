@@ -40,9 +40,10 @@ The runs of one series are usually consecutive, which is what `seq` is doing the
 have to be: the list can be typed out, pasted in, or saved straight from SRA Run Selector
 ([section 3](#option-a-public-data-geosra)).
 
-The download fetches the FASTQ files and writes `group.conf` and `metadata.tsv` for you.
-The second runs every step through to the normalized table. Between them there is nothing to
-fill in: the species comes from SRA, and the strandedness is measured rather than asked for.
+The download fetches the FASTQ files and writes `group.conf` and `metadata.tsv` for you, and
+the pipeline then goes through every step to the normalized table. Between the two there is
+nothing to fill in: the species comes from SRA, and the strandedness is measured rather than
+asked for.
 
 For your own FASTQ files, skip the download and put them in the group folder yourself
 ([section 3, Option B](#option-b-your-own-data)); `group.conf` is then the one file you write.
