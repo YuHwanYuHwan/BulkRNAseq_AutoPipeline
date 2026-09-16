@@ -32,9 +32,14 @@ accession list to a count matrix like this:
 mkdir -p rawData/ProjectA/GroupA
 seq 12345601 12345618 | sed 's/^/SRR/' > rawData/ProjectA/GroupA/accessions.csv
 
-bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA
-bash Scripts/run_pipeline.sh        rawData/ProjectA/GroupA
+bash   Scripts/PublicData_download.sh rawData/ProjectA/GroupA
+sbatch Scripts/run_pipeline.sh        rawData/ProjectA/GroupA
 ```
+
+Downloading runs where you typed it, because a compute node often has no route to the internet.
+The pipeline is submitted, because it takes hours and a shared machine expects it. On a machine
+with no scheduler, `bash` runs it just the same
+([section 5](#no-scheduler)).
 
 The runs of one series are usually consecutive, which is what `seq` is doing there. They do not
 have to be: the list can be typed out, pasted in, or saved straight from SRA Run Selector
@@ -51,19 +56,14 @@ For your own FASTQ files, skip the download and put them in the group folder you
 Both commands take several groups at once, which is how you leave an evening of work running:
 
 ```bash
-bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
-bash Scripts/run_pipeline.sh        rawData/ProjectA/GroupA rawData/ProjectA/GroupB
+bash   Scripts/PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
+sbatch Scripts/run_pipeline.sh        rawData/ProjectA/GroupA rawData/ProjectA/GroupB
 ```
 
 They are worked through in order, each group writing its own log under `logs/`. One group
-failing, or stopping for you to settle its strandedness, does not hold up the rest.
-
-On a cluster, submitting one job per group is usually better than one job for all of them: the
-scheduler can then start them side by side instead of running them back to back.
-
-```bash
-for g in rawData/ProjectA/*/; do sbatch Scripts/run_pipeline.sh "$g"; done
-```
+failing, or stopping for you to settle its strandedness, does not hold up the rest. On a
+cluster with more than one node the groups are also dealt out, one job per node, so two nodes
+get through two groups in the time one node gets through one.
 
 Both take hours. Sections [3](#3-adding-your-data) through [5](#5-running-the-pipeline) are the
 same four commands with the reasoning behind them, and are worth reading once before the first
@@ -579,8 +579,16 @@ person supplies it.
 ## 5. Running the pipeline
 
 ```bash
-bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA
+cd ~/BulkRNAseq_AutoPipeline      # submit from the repository root
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA
+squeue -u $USER
 ```
+
+Submitting to a scheduler is the normal way to run this, because a shared machine expects it
+and because the work is too long and too large to sit in a login shell. The reservations are in
+the file, so `sbatch` needs no arguments of its own;
+[section 13](#13-running-on-slurm) covers what they are and how to change them. Without a
+scheduler, see [the end of this section](#no-scheduler).
 
 This runs every step in order: FastQC, cutadapt, STAR, the strandedness probe, HTSeq, CPM,
 and the QC report. The probe records an unambiguous strandedness itself, so the run carries
@@ -589,28 +597,14 @@ straight on to counting without asking.
 **It takes hours.** On the run these figures come from, 18 human samples at 32 threads with
 roughly 22M read pairs each, alignment took 55 minutes and counting 40. Your own timings will
 differ with depth, thread count and disk. A first run also builds the STAR index, which we have
-not timed here and should be expected to take hours. To keep it going after you disconnect:
-
-```bash
-nohup bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA > logs/run.log 2>&1 &
-tail -f logs/run.log      # Ctrl+C stops watching, not the job
-```
-
-To stop a background run later, kill the whole process group. Killing the wrapper alone
-leaves `STAR` or `cutadapt` running as orphans:
-
-```bash
-kill -- -$(ps -o pgid= <PID> | tr -d ' ')
-```
-
-On a cluster you would submit this as a job instead (see [section 13](#13-running-on-slurm)).
+not timed here and should be expected to take hours.
 
 ### Several groups at once
 
 Name them all. They run in order, and each one writes its own log:
 
 ```bash
-bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
 ```
 
 ```
@@ -632,12 +626,9 @@ off, since every step skips what it already finished.
 Every path is checked before the first group starts, so a mistyped one costs you a second
 rather than the hours the groups ahead of it would have taken.
 
-On a cluster, prefer one job per group. Named together they share a single job and run back to
-back; submitted separately the scheduler can start them side by side:
-
-```bash
-for g in rawData/ProjectA/*/; do sbatch Scripts/run_pipeline.sh "$g"; done
-```
+On a cluster with more than one node, naming them together also spreads them: the groups are
+dealt out one job per node, and each node works through its share in order.
+[Section 13](#more-than-one-node) has the detail.
 
 Every step stamps its start and end, so the log reads as a timeline and a slow step is obvious
 without timing anything yourself:
@@ -719,6 +710,46 @@ bash Scripts/Alignment.sh          rawData/ProjectA/GroupA
 bash Scripts/probe_strandedness.sh rawData/ProjectA/GroupA
 ```
 </details>
+
+---
+
+### No scheduler
+
+Not every machine has one, and a single server usually does not. `bash` runs the same thing in
+the foreground, with the `#SBATCH` lines ignored as the comments they are:
+
+```bash
+bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA
+```
+
+Set `THREADS` in `config.sh`, since there is now no reservation to take the number from.
+Several groups still run in order, and nothing is ever submitted anywhere.
+
+To keep it going after you disconnect:
+
+```bash
+nohup bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA > logs/run.log 2>&1 &
+tail -f logs/run.log      # Ctrl+C stops watching, not the job
+```
+
+To stop a background run later, kill the whole process group. Killing the wrapper alone leaves
+`STAR` or `cutadapt` running as orphans:
+
+```bash
+kill -- -$(ps -o pgid= <PID> | tr -d ' ')
+```
+
+If the machine does have a scheduler, running it this way says so:
+
+```
+[NOTE] running here, not through the scheduler this machine has. If that was not
+       deliberate:  sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA
+```
+
+It is a note rather than a refusal, because a short foreground run is sometimes what you want.
+It is worth reading, though: on a login node, what a session may use is often capped well below
+what STAR needs, and the cap is met hours in, after the genome has been read into memory it was
+never going to be allowed to keep.
 
 ---
 

@@ -185,6 +185,8 @@ t_pipeline_spread() {
     out=$(cd "$R" && PATH="$R/bin:$PATH" bash Scripts/run_pipeline.sh rawData/P/a rawData/P/b 2>&1) || true
     grep -q '^SBATCH ' <<< "$out" && { echo "a foreground run submitted jobs"; return 1; }
     grep -q 'ran MultiQC on .*P/b' <<< "$out" || { echo "foreground run did not run the steps: $out"; return 1; }
+    # ...but it should say so, since a scheduler is right there and this is usually a slip
+    grep -q 'not through the scheduler' <<< "$out" || { echo "no note about the scheduler: $out"; return 1; }
 }
 
 PASS=0; FAIL=0

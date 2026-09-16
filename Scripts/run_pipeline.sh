@@ -42,6 +42,15 @@ if [ ${#BAD[@]} -gt 0 ]; then
     exit 1
 fi
 
+# Running here rather than through the scheduler is a choice, and a defensible one on a machine
+# that has none. On a machine that has one it is usually a slip, and an expensive one: a login
+# node caps what a session may use, and STAR meets that cap hours in, having read the genome
+# into memory it was never going to be allowed to keep.
+if [ -z "${SLURM_JOB_ID:-}" ] && command -v sinfo >/dev/null 2>&1; then
+    echo "[NOTE] running here, not through the scheduler this machine has. If that was not"
+    echo "       deliberate:  sbatch $0 $*"
+fi
+
 # Two nodes finish two groups in the time one node finishes one, and separate nodes beat
 # sharing one: counting is indifferent to company, but alignment is limited by memory
 # bandwidth rather than cores, and two STAR processes on a node split that bandwidth.
