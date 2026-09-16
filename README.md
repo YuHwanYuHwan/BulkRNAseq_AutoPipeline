@@ -23,8 +23,48 @@ The green box is what this pipeline hands you. Everything after it is your analy
 
 ---
 
+## The whole thing in four commands
+
+Once the machine is set up ([section 2](#2-installation)), a public dataset goes from an
+accession list to a count matrix like this:
+
+```bash
+mkdir -p rawData/ProjectA/GroupA
+
+cat > rawData/ProjectA/GroupA/accessions.csv <<'EOF'
+SRR0000001
+SRR0000002
+SRR0000003
+EOF
+
+bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA
+bash Scripts/run_pipeline.sh        rawData/ProjectA/GroupA
+```
+
+The first command fetches the FASTQ files and writes `group.conf` and `metadata.tsv` for you.
+The second runs every step through to the normalized table. Between them there is nothing to
+fill in: the species comes from SRA, and the strandedness is measured rather than asked for.
+
+For your own FASTQ files, skip the download and put them in the group folder yourself
+([section 3, Option B](#option-b-your-own-data)); `group.conf` is then the one file you write.
+
+Several groups can be downloaded in one command, and on a cluster the run is submitted rather
+than typed:
+
+```bash
+bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA
+```
+
+Both take hours. Sections [3](#3-adding-your-data) through [5](#5-running-the-pipeline) are the
+same four commands with the reasoning behind them, and are worth reading once before the first
+real dataset.
+
+---
+
 ## Contents
 
+0. [The whole thing in four commands](#the-whole-thing-in-four-commands)
 1. [Before you start: what each step does](#1-before-you-start-what-each-step-does)
 2. [Installation](#2-installation)
 3. [Adding your data](#3-adding-your-data)
@@ -43,8 +83,8 @@ The green box is what this pipeline hands you. Everything after it is your analy
 
 ## 1. Before you start: what each step does
 
-If this is your first time, this table is enough. Running the pipeline is two commands; the
-table explains what happens inside them.
+If this is your first time, this table is enough. The commands above are the whole procedure;
+the table explains what happens inside them.
 
 | Step | Tool | What it does | Why it is needed |
 |---|---|---|---|
