@@ -30,7 +30,7 @@ accession list to a count matrix like this:
 
 ```bash
 mkdir -p rawData/ProjectA/GroupA
-seq 38207576 38207593 | sed 's/^/SRR/' > rawData/ProjectA/GroupA/accessions.csv
+seq 12345601 12345618 | sed 's/^/SRR/' > rawData/ProjectA/GroupA/accessions.csv
 
 bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA
 bash Scripts/run_pipeline.sh        rawData/ProjectA/GroupA
@@ -406,7 +406,7 @@ The last one is a run table saved straight from SRA Run Selector. Save it as
 range there is no need to type them out:
 
 ```bash
-seq 38207576 38207593 | sed 's/^/SRR/' > rawData/ProjectA/GroupA/accessions.csv
+seq 12345601 12345618 | sed 's/^/SRR/' > rawData/ProjectA/GroupA/accessions.csv
 ```
 
 A handful of runs needs no file at all:
