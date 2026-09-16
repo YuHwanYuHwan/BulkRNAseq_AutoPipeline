@@ -11,6 +11,9 @@ cp "$LIB/../PublicData_download.sh" "$ROOT/Scripts/"
 NO_STEP_LOG=1                                 # keep step timestamps out of the report
 source "$ROOT/Scripts/lib/common.sh"          # PIPELINE_ROOT now points at the fake repo
 
+# The step scripts the pipeline calls, stubbed out by the tests that drive run_pipeline.sh
+STEPS_STUB=(FastQC Trimming Alignment probe_strandedness ReadCount CalcCPM MultiQC)
+
 # Flat file = one sample, subdirectory = one sample whose runs are merged.
 t_list_samples() {
     local G="$ROOT/rawData/P/g1"; mkdir -p "$G/GSM_B"
@@ -144,38 +147,49 @@ t_pipeline_multigroup() {
     grep -q 'nothing was run' <<< "$out"   || { echo "unhelpful message: $out"; return 1; }
 }
 
-# Dealing groups out to nodes. SUBMIT=echo stands in for sbatch, so this runs with no
-# scheduler present and checks the split rather than the submission.
-t_submit_split() {
-    local R="$TMP/repo3" out n
-    mkdir -p "$R/Scripts"
-    cp "$LIB/../submit_groups.sh" "$R/Scripts/"
+# Dealing groups out to nodes. A stub sbatch and sinfo stand in for the scheduler, so this
+# runs where there is none and checks who gets submitted where rather than the submission.
+t_pipeline_spread() {
+    local R="$TMP/repo3" out n step
+    mkdir -p "$R/Scripts" "$R/bin"
+    cp "$LIB/../run_pipeline.sh" "$R/Scripts/"
+    for step in "${STEPS_STUB[@]}"; do
+        printf '#!/bin/bash\necho "ran %s on $1"\n' "$step" > "$R/Scripts/${step}.sh"
+    done
+    printf '#!/bin/bash\nprintf "node01\\nnode02\\n"\n' > "$R/bin/sinfo"
+    printf '#!/bin/bash\necho "SBATCH $*"\n'            > "$R/bin/sbatch"
+    chmod +x "$R/bin/sinfo" "$R/bin/sbatch"
     for n in a b c d e; do mkdir -p "$R/rawData/P/$n"; done
 
-    out=$(cd "$R" && SUBMIT=echo NODES="node01 node02" \
-          bash Scripts/submit_groups.sh rawData/P/a rawData/P/b rawData/P/c rawData/P/d rawData/P/e 2>&1) \
-        || { echo "split failed: $out"; return 1; }
-    # round robin over two nodes: a c e | b d
-    grep -qE '^-w node01 Scripts/run_pipeline.sh .*/P/a .*/P/c .*/P/e$' <<< "$out" ||
+    # Under sbatch with several groups and more than one node: deal them out, run nothing here.
+    out=$(cd "$R" && PATH="$R/bin:$PATH" SLURM_JOB_ID=1 bash Scripts/run_pipeline.sh \
+          rawData/P/a rawData/P/b rawData/P/c rawData/P/d rawData/P/e 2>&1) \
+        || { echo "spread failed: $out"; return 1; }
+    grep -qE 'SBATCH .* -w node01 Scripts/run_pipeline.sh .*/P/a .*/P/c .*/P/e$' <<< "$out" ||
         { echo "node01 lane wrong: $out"; return 1; }
-    grep -qE '^-w node02 Scripts/run_pipeline.sh .*/P/b .*/P/d$' <<< "$out" ||
+    grep -qE 'SBATCH .* -w node02 Scripts/run_pipeline.sh .*/P/b .*/P/d$' <<< "$out" ||
         { echo "node02 lane wrong: $out"; return 1; }
-    [ "$(grep -c '^-w ' <<< "$out")" -eq 2 ] || { echo "expected 2 submissions: $out"; return 1; }
+    [ "$(grep -c '^SBATCH ' <<< "$out")" -eq 2 ] || { echo "expected 2 submissions: $out"; return 1; }
+    grep -q 'RNASEQ_LANE=1' <<< "$out"           || { echo "lanes not marked, they will spread again"; return 1; }
+    grep -q 'ran FastQC' <<< "$out"              && { echo "the dispatching job also ran the steps"; return 1; }
 
-    # More nodes than groups must not submit an empty job.
-    out=$(cd "$R" && SUBMIT=echo NODES="node01 node02 node03" \
-          bash Scripts/submit_groups.sh rawData/P/a 2>&1)
-    [ "$(grep -c '^-w ' <<< "$out")" -eq 1 ] || { echo "empty lane submitted: $out"; return 1; }
+    # A lane must get on with the work rather than deal the groups out a second time.
+    out=$(cd "$R" && PATH="$R/bin:$PATH" SLURM_JOB_ID=2 RNASEQ_LANE=1 \
+          bash Scripts/run_pipeline.sh rawData/P/a rawData/P/b 2>&1) || true
+    grep -q '^SBATCH ' <<< "$out" && { echo "a lane submitted more jobs"; return 1; }
+    grep -q 'ran MultiQC on .*P/b' <<< "$out" || { echo "lane did not run the steps: $out"; return 1; }
 
-    # A path outside rawData/ has no pipeline behind it, and nothing should be submitted.
-    out=$(cd "$R" && SUBMIT=echo NODES="node01" bash Scripts/submit_groups.sh "$TMP" 2>&1) &&
-        { echo "accepted a path outside rawData/"; return 1; }
-    grep -q 'not under a pipeline' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
+    # One group has nothing to spread, and bash rather than sbatch must never submit anything.
+    out=$(cd "$R" && PATH="$R/bin:$PATH" SLURM_JOB_ID=3 bash Scripts/run_pipeline.sh rawData/P/a 2>&1) || true
+    grep -q '^SBATCH ' <<< "$out" && { echo "single group was spread"; return 1; }
+    out=$(cd "$R" && PATH="$R/bin:$PATH" bash Scripts/run_pipeline.sh rawData/P/a rawData/P/b 2>&1) || true
+    grep -q '^SBATCH ' <<< "$out" && { echo "a foreground run submitted jobs"; return 1; }
+    grep -q 'ran MultiQC on .*P/b' <<< "$out" || { echo "foreground run did not run the steps: $out"; return 1; }
 }
 
 PASS=0; FAIL=0
 for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict \
-         t_multigroup_preflight t_pipeline_multigroup t_submit_split; do
+         t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi
 done

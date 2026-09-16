@@ -208,7 +208,6 @@ BulkRNAseq_AutoPipeline/
 │
 └── Scripts/                                # in the order they run
     ├── PublicData_download.sh              # SRR accessions -> FASTQ in a group folder
-    ├── submit_groups.sh                    # spread groups over a cluster's nodes, one job each
     ├── fetch_metadata.sh                   # GEO / BioSample -> metadata.tsv
     ├── list_samples.sh                     # print what the pipeline sees in a group
     │
@@ -1040,7 +1039,8 @@ bash Scripts/lib/selfcheck.sh    # logic only
 
 This exercises sample scanning, merge grouping, `group.conf` parsing, overhang computation,
 matrix assembly, probe interpretation, the refusal to start a download when a group has no
-accession list, a held group not stopping the groups after it, and the split across nodes. **It runs with no bioinformatics tool installed**,
+accession list, a held group not stopping the groups after it, and the deal across nodes. A
+stub scheduler stands in for SLURM, so that last one is checked on a machine that has none. **It runs with no bioinformatics tool installed**,
 so you can verify the code right after cloning, and use it as a regression check after editing
 a script.
 
@@ -1066,7 +1066,12 @@ What the wrapper reserves:
 
 | Script | Cores | Memory | Why |
 |---|---|---|---|
-| `run_pipeline.sh` | 32 | 96 GB | STAR holds a 30 GB index in memory, and building one wants 32 GB+ on its own |
+| `run_pipeline.sh` | 32 | 64 GB | STAR holds a 30 GB index in memory. Measured peak on a human dataset was 28 GB, so this is about twice what the run used |
+
+**These are the numbers the machines here use, not numbers that suit every cluster.** Edit the
+`#SBATCH` lines for your own: a node with fewer cores wants fewer than 32, and a genome larger
+than human wants more than 64 GB. Whether over-asking costs you anything depends on how the
+cluster schedules memory, which the end of this section explains.
 
 Override per submission when a dataset is unusually large or the queue is busy; the command
 line beats the directives in the file:
@@ -1116,35 +1121,38 @@ nodes is better than running them side by side on the same one. Counting does no
 alignment is limited by memory bandwidth rather than cores, so two STAR processes sharing a
 node share that bandwidth. Two nodes have their own.
 
-Hand the groups to `submit_groups.sh` and it deals them out, one job per node:
+Nothing extra to type: submit the groups together and they are dealt out for you, one job per
+node.
 
 ```bash
-bash Scripts/submit_groups.sh rawData/ProjectA/*/
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/*/
 ```
 
 ```
 [NODE] node01 <- ProjectA/GroupA ProjectA/GroupC ProjectA/GroupE
 [NODE] node02 <- ProjectA/GroupB ProjectA/GroupD
-Submitted batch job 41
 Submitted batch job 42
+Submitted batch job 43
 ```
 
-Each job then works through its own list in order, so every node runs one group at a time. The
-groups are dealt out in turn rather than cut in half, since neighbouring groups tend to be the
-ones most alike in size. Nodes come from `sinfo`; `NODES="node01 node02"` overrides that, and
-`SBATCH_OPTS` passes anything else through:
+The submitted job does the dealing and exits; the jobs it starts each work through their own
+list in order, so every node runs one group at a time. The groups are dealt out in turn rather
+than cut into blocks, since neighbouring groups tend to be the ones most alike in size. Nodes
+come from `sinfo`, and `NODES="node01 node02"` overrides that.
 
-```bash
-NODES="node02" SBATCH_OPTS="-c 16 --mem=48G" bash Scripts/submit_groups.sh rawData/P/A rawData/P/B
-```
+Each lane is pinned with `-w`, which fixes where the job runs and nothing else, so the rest of
+every node stays free for whoever else is on the cluster.
 
-It pins each job with `-w`, which fixes where the job runs and nothing else, so the rest of
-every node stays available to whoever else is on the cluster.
+Three things switch this off, and each is meant to:
 
-What it cannot do is react: the split is decided at submission, so if one lane turns out to
-hold the heavy groups, its node finishes late while the other sits idle. On a cluster you have
-to yourself, one job per group balances itself instead, because the scheduler starts the next
-group as soon as a node frees up:
+- **one group**, which has nothing to deal out
+- **one node**, where the groups run in order in the job you submitted
+- **`bash` instead of `sbatch`**, which submits nothing at all, so a foreground run stays one
+
+What the dealing cannot do is react. The split is decided when you submit, so if one lane turns
+out to hold the heavy groups, its node finishes late while the other sits idle. On a cluster
+you have to yourself, one job per group balances itself instead, because the scheduler starts
+the next group as soon as a node frees up:
 
 ```bash
 for g in rawData/P/*/; do sbatch --exclusive Scripts/run_pipeline.sh "$g"; done

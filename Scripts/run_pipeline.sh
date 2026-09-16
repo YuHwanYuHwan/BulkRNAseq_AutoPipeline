@@ -9,9 +9,15 @@
 #   Given several groups it works through them in order, each one written to its own log
 #   under logs/. A group that fails or stops at the probe does not hold up the rest; what
 #   happened to each is listed at the end.
+#
+#   Submitted with sbatch on a cluster with more than one node, several groups are dealt out
+#   one job per node and each node then works through its share in order. Run with bash it
+#   never submits anything.
+#
+#   NODES  nodes to deal the groups out to. Default: every node sinfo reports.
 #SBATCH --job-name=rnaseq
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=96G
+#SBATCH --mem=64G
 #SBATCH --output=logs/rnaseq_%j.out
 set -euo pipefail
 [ $# -ge 1 ] || { sed -n "2,10p" "$0"; exit 1; }
@@ -34,6 +40,40 @@ if [ ${#BAD[@]} -gt 0 ]; then
     printf '[ERROR] %s\n' "${BAD[@]}" >&2
     echo "        nothing was run" >&2
     exit 1
+fi
+
+# Two nodes finish two groups in the time one node finishes one, and separate nodes beat
+# sharing one: counting is indifferent to company, but alignment is limited by memory
+# bandwidth rather than cores, and two STAR processes on a node split that bandwidth.
+#
+# Only under sbatch, and only once. Started with bash this does nothing, so a foreground run
+# stays a foreground run; the jobs it submits carry RNASEQ_LANE so they get on with the work
+# instead of dealing the groups out again.
+REPO="$(cd "$1" && pwd)"; REPO="${REPO%%/rawData/*}"
+if [ $# -gt 1 ] && [ -n "${SLURM_JOB_ID:-}" ] && [ -z "${RNASEQ_LANE:-}" ] &&
+   command -v sinfo >/dev/null 2>&1; then
+    read -ra NODE_LIST <<< "${NODES:-$(sinfo -h -N -o '%N' | sort -u | tr '
+' ' ')}"
+    if [ ${#NODE_LIST[@]} -gt 1 ]; then
+        # Dealt out in turn rather than cut into blocks: neighbouring groups tend to be the
+        # ones most alike in size, so taking every Nth keeps the lanes closer in total.
+        declare -A LANE=()
+        i=0
+        for g in "$@"; do
+            n="${NODE_LIST[$(( i % ${#NODE_LIST[@]} ))]}"
+            LANE[$n]="${LANE[$n]:-}${LANE[$n]:+ }$(cd "$g" && pwd)"
+            i=$((i+1))
+        done
+        cd "$REPO"      # the job log path in the directives is relative to where sbatch ran
+        for n in "${NODE_LIST[@]}"; do
+            [ -n "${LANE[$n]:-}" ] || continue          # more nodes than groups
+            echo "[NODE] $n <- $(tr ' ' '
+' <<< "${LANE[$n]}" | sed 's|.*/rawData/||' | paste -sd' ')"
+            # Unquoted on purpose: each group must arrive as its own argument.
+            sbatch --export=ALL,RNASEQ_LANE=1 -w "$n" Scripts/run_pipeline.sh ${LANE[$n]}
+        done
+        exit 0
+    fi
 fi
 
 # One group, start to finish. Each step is checked on its own: called from a context where
