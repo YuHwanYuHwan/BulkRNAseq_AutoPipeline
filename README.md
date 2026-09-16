@@ -48,18 +48,18 @@ asked for.
 For your own FASTQ files, skip the download and put them in the group folder yourself
 ([section 3, Option B](#option-b-your-own-data)); `group.conf` is then the one file you write.
 
-Several groups download in one command. Running them is one command per group, in a loop:
+Both commands take several groups at once, which is how you leave an evening of work running:
 
 ```bash
 bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
-
-for g in rawData/ProjectA/*/; do bash Scripts/run_pipeline.sh "$g"; done
+bash Scripts/run_pipeline.sh        rawData/ProjectA/GroupA rawData/ProjectA/GroupB
 ```
 
-The two are not symmetric on purpose. Downloading is one connection at a time whatever you do,
-so a single command working through the list is all there is to arrange. A pipeline run is not:
-each group is an independent job with its own log, and on a cluster you submit them separately
-so the scheduler can start them side by side.
+They are worked through in order, each group writing its own log under `logs/`. One group
+failing, or stopping for you to settle its strandedness, does not hold up the rest.
+
+On a cluster, submitting one job per group is usually better than one job for all of them: the
+scheduler can then start them side by side instead of running them back to back.
 
 ```bash
 for g in rawData/ProjectA/*/; do sbatch Scripts/run_pipeline.sh "$g"; done
@@ -605,14 +605,39 @@ kill -- -$(ps -o pgid= <PID> | tr -d ' ')
 
 On a cluster you would submit this as a job instead (see [section 13](#13-running-on-slurm)).
 
-The script takes one group, because one group is one count matrix. Several groups are a loop,
-which also keeps each run in its own log and lets a scheduler start them side by side:
+### Several groups at once
+
+Name them all. They run in order, and each one writes its own log:
+
+```bash
+bash Scripts/run_pipeline.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
+```
+
+```
+[GROUP] rawData/ProjectA/GroupA  -> /home/you/BulkRNAseq_AutoPipeline/logs/ProjectA_GroupA_20260916_0914.log
+...
+[HOLD] rawData/ProjectA/GroupA - strandedness is yours to call; record it and run this same command again
+[GROUP] rawData/ProjectA/GroupB  -> /home/you/BulkRNAseq_AutoPipeline/logs/ProjectA_GroupB_20260916_0914.log
+...
+
+[DONE] 2 group(s): 1 finished, 1 held, 0 failed
+[HOLD] rawData/ProjectA/GroupA
+```
+
+A group that fails, or that stops for you to settle its strandedness, does not stop the ones
+after it. The summary at the end says which is which, and the command exits 1 if anything
+failed, 2 if anything is only waiting for you. Running it again picks up where each group left
+off, since every step skips what it already finished.
+
+Every path is checked before the first group starts, so a mistyped one costs you a second
+rather than the hours the groups ahead of it would have taken.
+
+On a cluster, prefer one job per group. Named together they share a single job and run back to
+back; submitted separately the scheduler can start them side by side:
 
 ```bash
 for g in rawData/ProjectA/*/; do sbatch Scripts/run_pipeline.sh "$g"; done
 ```
-
-A group that stops at the strandedness probe does not hold up the others this way.
 
 Every step stamps its start and end, so the log reads as a timeline and a slow step is obvious
 without timing anything yourself:

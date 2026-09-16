@@ -116,8 +116,37 @@ t_multigroup_preflight() {
     [ ! -e "$A/.runinfo.csv" ]     || { echo "hit the network before checking every group"; return 1; }
 }
 
+# Several groups in one run_pipeline call: a group that stops at the probe must not take the
+# ones after it down with it, and each must keep its own log. Stub steps stand in for the real
+# tools, so this says nothing about the tools and everything about the sequencing.
+t_pipeline_multigroup() {
+    local R="$TMP/repo2" step rc out
+    mkdir -p "$R/Scripts" "$R/rawData/P/a" "$R/rawData/P/b"
+    cp "$LIB/../run_pipeline.sh" "$R/Scripts/"
+    for step in FastQC Trimming Alignment ReadCount CalcCPM MultiQC; do
+        printf '#!/bin/bash\necho "ran %s on $1"\n' "$step" > "$R/Scripts/${step}.sh"
+    done
+    # group a holds at the probe, group b sails through
+    printf '#!/bin/bash\necho "probed $1"\ncase "$1" in *P/a) exit 2 ;; esac\n' \
+        > "$R/Scripts/probe_strandedness.sh"
+
+    rc=0; out=$(bash "$R/Scripts/run_pipeline.sh" "$R/rawData/P/a" "$R/rawData/P/b" 2>&1) || rc=$?
+    [ "$rc" -eq 2 ]                                  || { echo "held run exited $rc (expected 2)"; return 1; }
+    grep -q 'ran MultiQC on .*P/b' <<< "$out"        || { echo "group b did not finish after a held"; return 1; }
+    grep -q 'ran ReadCount on .*P/a' <<< "$out"      && { echo "group a counted despite the hold"; return 1; }
+    [ -s "$R/logs/P_a_"*.log ] && [ -s "$R/logs/P_b_"*.log ] || { echo "per-group logs missing"; return 1; }
+    grep -q 'P/b' "$R/logs/P_a_"*.log                && { echo "group b leaked into group a's log"; return 1; }
+
+    # A path that is not under rawData/ has no pipeline to run, and saying so must come before
+    # the groups that are fine have already spent hours.
+    rc=0; out=$(bash "$R/Scripts/run_pipeline.sh" "$R/rawData/P/a" "$TMP" 2>&1) || rc=$?
+    [ "$rc" -eq 1 ]                        || { echo "bad path exited $rc (expected 1)"; return 1; }
+    grep -q 'nothing was run' <<< "$out"   || { echo "unhelpful message: $out"; return 1; }
+}
+
 PASS=0; FAIL=0
-for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_multigroup_preflight; do
+for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict \
+         t_multigroup_preflight t_pipeline_multigroup; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi
 done
