@@ -30,18 +30,17 @@ accession list to a count matrix like this:
 
 ```bash
 mkdir -p rawData/ProjectA/GroupA
-
-cat > rawData/ProjectA/GroupA/accessions.csv <<'EOF'
-SRR0000001
-SRR0000002
-SRR0000003
-EOF
+seq 38207576 38207593 | sed 's/^/SRR/' > rawData/ProjectA/GroupA/accessions.csv
 
 bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA
 bash Scripts/run_pipeline.sh        rawData/ProjectA/GroupA
 ```
 
-The first command fetches the FASTQ files and writes `group.conf` and `metadata.tsv` for you.
+The runs of one series are usually consecutive, which is what `seq` is doing there. They do not
+have to be: the list can be typed out, pasted in, or saved straight from SRA Run Selector
+([section 3](#option-a-public-data-geosra)).
+
+The download fetches the FASTQ files and writes `group.conf` and `metadata.tsv` for you.
 The second runs every step through to the normalized table. Between them there is nothing to
 fill in: the species comes from SRA, and the strandedness is measured rather than asked for.
 
