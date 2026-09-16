@@ -48,12 +48,21 @@ asked for.
 For your own FASTQ files, skip the download and put them in the group folder yourself
 ([section 3, Option B](#option-b-your-own-data)); `group.conf` is then the one file you write.
 
-Several groups can be downloaded in one command, and on a cluster the run is submitted rather
-than typed:
+Several groups download in one command. Running them is one command per group, in a loop:
 
 ```bash
 bash Scripts/PublicData_download.sh rawData/ProjectA/GroupA rawData/ProjectA/GroupB
-sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA
+
+for g in rawData/ProjectA/*/; do bash Scripts/run_pipeline.sh "$g"; done
+```
+
+The two are not symmetric on purpose. Downloading is one connection at a time whatever you do,
+so a single command working through the list is all there is to arrange. A pipeline run is not:
+each group is an independent job with its own log, and on a cluster you submit them separately
+so the scheduler can start them side by side.
+
+```bash
+for g in rawData/ProjectA/*/; do sbatch Scripts/run_pipeline.sh "$g"; done
 ```
 
 Both take hours. Sections [3](#3-adding-your-data) through [5](#5-running-the-pipeline) are the
@@ -595,6 +604,15 @@ kill -- -$(ps -o pgid= <PID> | tr -d ' ')
 ```
 
 On a cluster you would submit this as a job instead (see [section 13](#13-running-on-slurm)).
+
+The script takes one group, because one group is one count matrix. Several groups are a loop,
+which also keeps each run in its own log and lets a scheduler start them side by side:
+
+```bash
+for g in rawData/ProjectA/*/; do sbatch Scripts/run_pipeline.sh "$g"; done
+```
+
+A group that stops at the strandedness probe does not hold up the others this way.
 
 Every step stamps its start and end, so the log reads as a timeline and a slow step is obvious
 without timing anything yourself:
