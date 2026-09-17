@@ -22,7 +22,18 @@ t_list_samples() {
           "$G/GSM_B/SRR003_1.fastq.gz" "$G/GSM_B/SRR003_2.fastq.gz" \
           "$G/GSM_C/SRR004.fastq.gz" "$G/GSM_C/SRR005.fastq.gz"   # merged, single-end
     init_group "$G"
-    local out; out=$(list_samples 2>/dev/null | sort)
+    # Run the way a step script runs it, not in this process: `set -e` is what makes a failing
+    # `ls` inside an assignment end the function, and it ends it quietly, because the list is
+    # read through a process substitution. Calling the function from here, where errexit is
+    # off, the check passes on code that hands the tools nothing.
+    printf '#!/bin/bash
+set -euo pipefail
+NO_STEP_LOG=1
+source "%s/Scripts/lib/common.sh"
+init_group "$1"
+list_samples
+'         "$ROOT" > "$ROOT/Scripts/_list.sh"
+    local out; out=$(bash "$ROOT/Scripts/_list.sh" "$G" 2>/dev/null | sort)
     [ "$(grep -c . <<< "$out")" -eq 4 ]                                  || { echo "sample count $(grep -c . <<< "$out") != 4"; return 1; }
     grep '^GSM_B' <<< "$out" | grep -q 'SRR002_1.*,.*SRR003_1'           || { echo "GSM_B runs not merged"; return 1; }
     # A merge folder of single-end runs has no _1 to match. Left unhandled its file list comes
