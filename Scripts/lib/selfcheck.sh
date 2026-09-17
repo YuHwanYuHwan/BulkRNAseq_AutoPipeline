@@ -16,14 +16,20 @@ STEPS_STUB=(FastQC Trimming Alignment probe_strandedness ReadCount CalcCPM Multi
 
 # Flat file = one sample, subdirectory = one sample whose runs are merged.
 t_list_samples() {
-    local G="$ROOT/rawData/P/g1"; mkdir -p "$G/GSM_B"
+    local G="$ROOT/rawData/P/g1"; mkdir -p "$G/GSM_B" "$G/GSM_C" "$G/GSM_D"
     touch "$G/SRR001_1.fastq.gz" "$G/SRR001_2.fastq.gz" "$G/SRR009.fastq.gz" \
           "$G/GSM_B/SRR002_1.fastq.gz" "$G/GSM_B/SRR002_2.fastq.gz" \
-          "$G/GSM_B/SRR003_1.fastq.gz" "$G/GSM_B/SRR003_2.fastq.gz"
+          "$G/GSM_B/SRR003_1.fastq.gz" "$G/GSM_B/SRR003_2.fastq.gz" \
+          "$G/GSM_C/SRR004.fastq.gz" "$G/GSM_C/SRR005.fastq.gz"   # merged, single-end
     init_group "$G"
-    local out; out=$(list_samples | sort)
-    [ "$(grep -c . <<< "$out")" -eq 3 ]                                  || { echo "sample count $(grep -c . <<< "$out") != 3"; return 1; }
+    local out; out=$(list_samples 2>/dev/null | sort)
+    [ "$(grep -c . <<< "$out")" -eq 4 ]                                  || { echo "sample count $(grep -c . <<< "$out") != 4"; return 1; }
     grep '^GSM_B' <<< "$out" | grep -q 'SRR002_1.*,.*SRR003_1'           || { echo "GSM_B runs not merged"; return 1; }
+    # A merge folder of single-end runs has no _1 to match. Left unhandled its file list comes
+    # back empty, and fastqc given no files opens its window instead of reading anything.
+    grep '^GSM_C' <<< "$out" | grep -q 'SRR004.*,.*SRR005'               || { echo "GSM_C single-end runs not merged"; return 1; }
+    grep '^GSM_C' <<< "$out" | awk -F'\t' '$3==""' | grep -q .           || { echo "GSM_C not single-end"; return 1; }
+    grep -q '^GSM_D' <<< "$out"                                          && { echo "empty folder emitted as a sample"; return 1; }
     grep '^SRR001' <<< "$out" | grep -q 'SRR001_2.fastq.gz'              || { echo "SRR001 R2 not paired"; return 1; }
     grep '^SRR009' <<< "$out" | awk -F'\t' '$3==""' | grep -q .          || { echo "SRR009 not single-end"; return 1; }
     [ "$PROC_DIR" = "$ROOT/Processed/P/g1" ]                             || { echo "PROC_DIR=$PROC_DIR"; return 1; }

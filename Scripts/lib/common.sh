@@ -62,12 +62,18 @@ init_group() {
 # Sample list. One line per sample: sample_id<TAB>R1(comma-joined)<TAB>R2(comma-joined, empty if single-end)
 list_samples() {
     local d f stem s
+    local r1 r2
     for d in "$GROUP_DIR"/*/; do
         [ -d "$d" ] || continue
         s="$(basename "$d")"
-        printf '%s\t%s\t%s\n' "$s" \
-            "$(ls "$d"*_1.fastq* "$d"*_1.fq* 2>/dev/null | paste -sd,)" \
-            "$(ls "$d"*_2.fastq* "$d"*_2.fq* 2>/dev/null | paste -sd,)"
+        r1="$(ls "$d"*_1.fastq* "$d"*_1.fq* 2>/dev/null | paste -sd,)"
+        r2="$(ls "$d"*_2.fastq* "$d"*_2.fq* 2>/dev/null | paste -sd,)"
+        # A merge folder can hold single-end runs, which have no _1 to find. Everything in it
+        # is then one sample's reads. Without this the pair comes back empty and the tools are
+        # handed a sample with no files: fastqc answers that by opening its window.
+        [ -n "$r1" ] || r1="$(ls "$d"*.fastq* "$d"*.fq* 2>/dev/null | paste -sd,)"
+        [ -n "$r1" ] || { echo "[WARN] $s holds no FASTQ - skipped" >&2; continue; }
+        printf '%s\t%s\t%s\n' "$s" "$r1" "$r2"
     done
     for f in "$GROUP_DIR"/*.fastq.gz "$GROUP_DIR"/*.fastq "$GROUP_DIR"/*.fq.gz "$GROUP_DIR"/*.fq; do
         [ -e "$f" ] || continue
