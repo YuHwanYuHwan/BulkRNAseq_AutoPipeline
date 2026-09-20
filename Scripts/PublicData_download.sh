@@ -53,10 +53,10 @@ download_group() {   # $1=group_dir, rest=accessions
     # runinfo is machinery, not the user's metadata: it exists only to group runs by sample.
     # The conditions (tissue, treatment, donor) are not in it - fetch_metadata.sh gets those.
     # The endpoint takes a comma-separated list, so this is one request rather than one per run.
-    # --max-time, because a request with no deadline is a night that ends here. NCBI answers
-    # this endpoint in seconds when it answers at all, and slows down under repeated hammering.
+    # Short deadline, one retry: this endpoint answers in seconds when it answers at all, so
+    # waiting longer only postpones asking ENA, which is standing right there with the answer.
     local META="${GROUP_DIR}/.runinfo.csv"
-    curl -sf --max-time 120 --retry 3 --retry-delay 10          "${RUNINFO_URL}$(IFS=,; echo "${ACCS[*]}")" > "$META" || true
+    curl -sf --max-time 45 --retry 1 --retry-delay 5          "${RUNINFO_URL}$(IFS=,; echo "${ACCS[*]}")" > "$META" || true
     if [ ! -s "$META" ]; then
         echo "[WARN] NCBI runinfo did not answer - reading the same fields from ENA" >&2
         printf '%s
