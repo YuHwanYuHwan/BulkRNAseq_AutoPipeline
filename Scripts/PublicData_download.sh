@@ -174,8 +174,17 @@ SUBMITTED=0
 command -v sbatch >/dev/null 2>&1 && HAVE_SBATCH=1 || HAVE_SBATCH=0
 for g in "${GROUP_DIRS[@]}"; do
     if [ "$HAVE_SBATCH" = 1 ]; then
-        (cd "$PIPELINE_ROOT" && mkdir -p logs &&
-         sbatch -J sra2fq -c 8 --mem=16G -o "logs/sra2fq_%j.out"                 --wrap "bash '$S/sra_to_fastq.sh' '$g'") && SUBMITTED=$((SUBMITTED+1))
+        # A refused submission used to pass unremarked, and the run ended saying it was done
+        # while the group held archives and nothing had been queued to unpack them. A cluster
+        # with no default partition refuses every submission that does not name one, which is
+        # what SBATCH_PARTITION in your environment is for.
+        if (cd "$PIPELINE_ROOT" && mkdir -p logs &&
+            sbatch -J sra2fq -c 8 --mem=16G -o "logs/sra2fq_%j.out"                    --wrap "bash '$S/sra_to_fastq.sh' '$g'"); then
+            SUBMITTED=$((SUBMITTED+1))
+        else
+            echo "[FAIL] could not submit the unpacking job for $g" >&2
+            FAILED+=("$g (unpacking not submitted; run Scripts/sra_to_fastq.sh on it)")
+        fi
     else
         bash "$S/sra_to_fastq.sh" "$g" || FAILED+=("$g (conversion)")
     fi
