@@ -489,6 +489,14 @@ expression.** To get it right the script fetches SRA runinfo into `.runinfo.csv`
 `SampleName` column; later steps then merge those runs automatically. That file is machinery,
 not your metadata; ignore it.
 
+NCBI's runinfo endpoint is the one part of this with no second copy, and it does go quiet for
+hours at a time. When it does, the same fields are read from ENA instead and written in the
+same shape, so nothing downstream notices:
+
+```
+[WARN] NCBI runinfo did not answer - reading the same fields from ENA
+```
+
 ### The metadata table
 
 runinfo says which sample a run belongs to and nothing about what the sample *is*. The

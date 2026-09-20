@@ -134,6 +134,38 @@ t_sa_index() {
     done
 }
 
+# The ENA fallback reshapes a different service's answer into the file the rest of the
+# pipeline reads. A stub curl stands in for the network: what is checked is the reshaping,
+# including a run with no sample alias, which has to become a sample of its own.
+t_ena_runinfo() {
+    local R="$TMP/repo5" out
+    mkdir -p "$R/Scripts/lib" "$R/bin" "$R/rawData/P/g"
+    cp "$LIB/common.sh" "$R/Scripts/lib/"; cp "$LIB/../PublicData_download.sh" "$R/Scripts/"
+    cat > "$R/bin/curl" <<'STUB'
+#!/bin/bash
+printf 'run_accession\tsample_alias\tsample_accession\tstudy_accession\tscientific_name\n'
+printf 'SRR001\tGSM_A\tSAMN01\tPRJNA9\tArabidopsis thaliana\n'
+printf 'SRR002\tGSM_A\tSAMN01\tPRJNA9\tArabidopsis thaliana\n'
+printf 'SRR003\t\tSAMN02\tPRJNA9\tArabidopsis thaliana\n'
+STUB
+    chmod +x "$R/bin/curl"
+    printf 'SRR001\nSRR002\nSRR003\n' > "$R/rawData/P/g/accessions.csv"
+
+    # Only the function, not the whole script: the download itself needs tools and a network.
+    out=$(PATH="$R/bin:$PATH" bash -c '
+        source "'"$R"'/Scripts/lib/common.sh" >/dev/null 2>&1
+        ENA_URL=x
+        eval "$(sed -n "/^ena_runinfo()/,/^}/p" "'"$R"'/Scripts/PublicData_download.sh")"
+        printf "SRR001\nSRR002\nSRR003\n" | ena_runinfo' 2>/dev/null)
+
+    [ "$(head -1 <<< "$out")" = "Run,SampleName,BioSample,BioProject,ScientificName" ] ||
+        { echo "header: $(head -1 <<< "$out")"; return 1; }
+    grep -q '^SRR001,GSM_A,SAMN01,PRJNA9,Arabidopsis thaliana$' <<< "$out" ||
+        { echo "row not reshaped: $out"; return 1; }
+    grep -q '^SRR003,SRR003,' <<< "$out" ||
+        { echo "a run with no alias must become its own sample: $out"; return 1; }
+}
+
 # Several groups at once means a typo in the last one must surface before the first download,
 # not twelve hours into the night. Runs without any tool installed: the refusal is reached
 # before prefetch is ever called.
@@ -267,7 +299,8 @@ STUB
 
 PASS=0; FAIL=0
 for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_sa_index \
-         t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread t_sra_to_fastq; do
+         t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread t_sra_to_fastq \
+         t_ena_runinfo; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi
 done

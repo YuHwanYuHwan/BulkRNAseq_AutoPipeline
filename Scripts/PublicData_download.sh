@@ -20,9 +20,25 @@
 set -euo pipefail
 
 RUNINFO_URL="https://trace.ncbi.nlm.nih.gov/Traces/sra-db-be/runinfo?acc="
+ENA_URL="https://www.ebi.ac.uk/ena/portal/api/search"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 [ $# -ge 1 ] || { sed -n '2,13p' "$0"; exit 1; }
+
+# Everything here hangs off one request to NCBI, and that is the request that goes away: the
+# endpoint has spent whole evenings not answering. ENA holds the same fields under different
+# names, so the file is rebuilt from there and everything downstream reads it unchanged.
+# Batched because the query goes in the URL, and a few hundred accessions do not fit in one.
+ena_runinfo() {   # accessions on stdin, one per line -> runinfo-shaped CSV on stdout
+    local batch q
+    echo "Run,SampleName,BioSample,BioProject,ScientificName"
+    while mapfile -t -n 50 batch && [ "${#batch[@]}" -gt 0 ]; do
+        q="$(printf 'run_accession="%s" OR ' "${batch[@]}")"; q="${q% OR }"
+        curl -s --max-time 120 --retry 2 -G "$ENA_URL"             --data-urlencode 'result=read_run'             --data-urlencode "query=$q"             --data-urlencode 'fields=run_accession,sample_alias,sample_accession,study_accession,scientific_name'             --data-urlencode 'format=tsv' |
+        # An alias is what groups several runs into one sample. Without one the run is its own.
+        awk -F'	' 'NR>1 && $1 != "" { print $1 "," ($2 == "" ? $1 : $2) "," $3 "," $4 "," $5 }'
+    done
+}
 
 # Every accession found anywhere in a file, duplicates dropped. Scraping rather than parsing
 # means a run table or a copied web page works without editing.
@@ -41,7 +57,12 @@ download_group() {   # $1=group_dir, rest=accessions
     # this endpoint in seconds when it answers at all, and slows down under repeated hammering.
     local META="${GROUP_DIR}/.runinfo.csv"
     curl -sf --max-time 120 --retry 3 --retry-delay 10          "${RUNINFO_URL}$(IFS=,; echo "${ACCS[*]}")" > "$META" || true
-    [ -s "$META" ] || { echo "[ERROR] runinfo lookup failed for $GROUP_DIR" >&2; return 1; }
+    if [ ! -s "$META" ]; then
+        echo "[WARN] NCBI runinfo did not answer - reading the same fields from ENA" >&2
+        printf '%s
+' "${ACCS[@]}" | ena_runinfo > "$META"
+    fi
+    [ "$(wc -l < "$META")" -gt 1 ] || { echo "[ERROR] runinfo lookup failed for $GROUP_DIR" >&2; return 1; }
     echo "[INFO] runinfo: $(( $(wc -l < "$META") - 1 )) runs"
 
     # -- 1b. group.conf -----------------------------------------------------
