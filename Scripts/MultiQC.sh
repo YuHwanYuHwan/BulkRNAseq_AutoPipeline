@@ -99,7 +99,7 @@ cat > "$REPORT" <<TXT
                 (annotation and sjdbOverhang ${OVERHANG} come from the index)
   HTSeq         -r pos -s ${strandedness}
                 evidence: ${PROBE_LINE}
-  normalization edgeR TMM -> CPM
+  normalization edgeR TMM -> CPM, written as log2(CPM+1)
 
 [ QC summary ]
   input reads       ${DEPTH:-n/a}   per sample, after trimming
@@ -115,7 +115,8 @@ cat > "$REPORT" <<TXT
   (v.${V_STAR:-?}; sjdbOverhang ${OVERHANG}, mismatch rate <= 0.03, up to 10 multimapping
   loci); ${MAP_PROSE} of reads mapped uniquely. Gene-level counts were obtained with
   HTSeq-count (v.${V_HTSEQ:-?}) in ${STRAND_PROSE} and normalised to counts per million
-  via the trimmed mean of M-values (TMM) method in edgeR (v.${V_EDGER:-?}) running on
+  via the trimmed mean of M-values (TMM) method in edgeR (v.${V_EDGER:-?}), reported as
+  log2(CPM + 1), running on
   R (v.${V_R:-?}).
 TXT
 

@@ -200,7 +200,7 @@ BulkRNAseq_AutoPipeline/
 ├── Output/                                 # final results, mirrors rawData. KEEP THIS
 │   └── ProjectA/GroupA/
 │       ├── GroupA_count_matrix.tsv         # raw counts, genes x samples
-│       ├── GroupA_CPM.tsv                  # TMM-normalized CPM
+│       ├── GroupA_logCPM.tsv               # TMM-normalized CPM, as log2(CPM+1)
 │       ├── GroupA_multiqc_report.html
 │       └── GroupA_pipeline_report.txt      # versions, parameters, QC, Methods draft
 │
@@ -221,7 +221,7 @@ BulkRNAseq_AutoPipeline/
     ├── probe_strandedness.sh               #   4. one sample counted, for you to judge
     │
     ├── ReadCount.sh                        #   5. HTSeq counts -> count matrix
-    ├── CalcCPM.sh / CalcCPM.R              #   6. TMM/CPM normalization
+    ├── CalcCPM.sh / CalcCPM.R              #   6. TMM/CPM normalization, log2(CPM+1)
     ├── MultiQC.sh                          #   7. QC report + pipeline report
     │
     └── lib/
@@ -897,7 +897,7 @@ Counting refuses to start while the value is missing, which beats burning hours 
 [2026-08-26 15:09:40] <== ReadCount  00:40:29
 
 [2026-08-26 15:09:40] ==> CalcCPM
-[CPM ] 78932 genes x 18 samples -> .../GroupA_CPM.tsv
+[CPM ] 78932 genes x 18 samples, log2(CPM+1) -> .../GroupA_logCPM.tsv
 [2026-08-26 15:09:52] <== CalcCPM  00:00:12
 
 [2026-08-26 15:09:52] ==> MultiQC
@@ -931,7 +931,7 @@ library read 43.6% under the probe's `-s reverse` and 2.9% once counted as unstr
 ```
 Output/<project>/<group>/
     <group>_count_matrix.tsv      raw counts, genes x samples
-    <group>_CPM.tsv               TMM-normalized CPM
+    <group>_logCPM.tsv            TMM-normalized CPM, as log2(CPM+1)
     <group>_multiqc_report.html   QC summary for every step (open in a browser)
     <group>_pipeline_report.txt   versions, parameters, QC, and a Methods draft
 ```
