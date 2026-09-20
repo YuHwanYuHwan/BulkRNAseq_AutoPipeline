@@ -21,7 +21,7 @@ eutils() {   # $1 = everything after the endpoint
     local try out
     for try in 1 2 3; do
         sleep 0.4
-        out=$(curl -sf "${EUTILS}/$1") && { printf '%s' "$out"; return 0; }
+        out=$(curl -sf --max-time 60 "${EUTILS}/$1") && { printf '%s' "$out"; return 0; }
     done
     return 1
 }
@@ -45,11 +45,11 @@ if [[ "$FIRST_SAMPLE" == GSM* ]]; then
     # GEO serves this text with CRLF line endings. A carriage return riding along on the
     # series id makes the next URL malformed, and curl fails with a code that says nothing
     # about where it came from.
-    SERIES=$(curl -sf "${GEO}?acc=${FIRST_SAMPLE}&targ=self&form=text&view=brief" |
+    SERIES=$(curl -sf --max-time 60 "${GEO}?acc=${FIRST_SAMPLE}&targ=self&form=text&view=brief" |
              tr -d '\r' | awk -F' = ' '/^!Sample_series_id/ { print $2; exit }')
     [ -n "$SERIES" ] || { echo "[ERROR] no series for $FIRST_SAMPLE" >&2; exit 1; }
     echo "[GEO ] $SERIES"
-    curl -sf "${GEO}?acc=${SERIES}&targ=gsm&form=text&view=brief" | tr -d '\r' > "$RAW"
+    curl -sf --max-time 120 "${GEO}?acc=${SERIES}&targ=gsm&form=text&view=brief" | tr -d '\r' > "$RAW"
 else
     # Not a GEO submission: BioSample carries the same attributes, one fetch per sample.
     # Emitted in the GEO shape so the parser below does not need a second form.
