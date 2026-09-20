@@ -32,12 +32,12 @@ command -v pigz >/dev/null 2>&1 && ZIP="pigz -p $THREADS" || ZIP="gzip"
 # means a run table or a copied web page works without editing.
 scrape_accessions() { grep -oE '[SED]RR[0-9]+' "$1" | awk '!seen[$0]++'; }
 
-# One run, start to finished .fastq.gz. Returns non-zero instead of aborting: over a night of
-# downloads a single expired link or a blip at NCBI must cost that run, not the other forty.
+# Downloading only. Turning the archive into FASTQ is local work, and sra_to_fastq.sh does it
+# on a compute node once everything is here. Returns non-zero instead of aborting: over a
+# night of downloads a single expired link or a blip at NCBI must cost that run, not the
+# other forty.
 get_run() {   # $1=dest  $2=accession
-    prefetch --output-directory "$1" "$2" >/dev/null &&
-    fasterq-dump --split-3 --threads "$THREADS" --outdir "$1" "${1}/${2}" >/dev/null &&
-    $ZIP -f "$1"/"$2"*.fastq
+    prefetch --output-directory "$1" "$2" >/dev/null
 }
 
 download_group() {   # $1=group_dir, rest=accessions
@@ -91,13 +91,11 @@ download_group() {   # $1=group_dir, rest=accessions
 
         if is_done "$dest" "$acc"; then echo "[SKIP] $acc"; continue; fi
         echo "[GET ] $acc -> $dest"
-        if get_run "$dest" "$acc"; then
+        if ! get_run "$dest" "$acc"; then
+            # Nothing half-downloaded left behind, so re-running the same command picks up
+            # exactly the runs that failed. The .done flag is written by the conversion, which
+            # is the point at which the reads actually exist.
             rm -rf "${dest:?}/${acc}"
-            mark_done "$dest" "$acc"
-        else
-            # No .done flag and no half-written FASTQ left behind, so re-running the same
-            # command picks up exactly the runs that failed.
-            rm -rf "${dest:?}/${acc}"; rm -f "${dest}/${acc}"*.fastq
             echo "[FAIL] $acc" >&2
             FAILED+=("${GROUP_DIR}/${acc}")
         fi
@@ -154,6 +152,21 @@ for g in "${GROUP_DIRS[@]}"; do
     download_group "$g" "${accs[@]}" || FAILED+=("$g (runinfo)")
 done
 
+# Converting is local work: no internet, a lot of CPU, and hours of it. Off to the scheduler
+# it goes, one job per group so they run alongside each other rather than one after another.
+# --wrap rather than the script itself: sbatch copies a submitted script into a spool
+# directory, where lib/common.sh is not next to it.
+S="$(dirname "${BASH_SOURCE[0]}")"
+SUBMITTED=0
+for g in "${GROUP_DIRS[@]}"; do
+    if command -v sbatch >/dev/null 2>&1; then
+        (cd "$PIPELINE_ROOT" && mkdir -p logs &&
+         sbatch -J sra2fq -c 8 --mem=16G -o "logs/sra2fq_%j.out"                 --wrap "bash '$S/sra_to_fastq.sh' '$g'") && SUBMITTED=$((SUBMITTED+1))
+    else
+        bash "$S/sra_to_fastq.sh" "$g" || FAILED+=("$g (conversion)")
+    fi
+done
+
 # Metadata last, not after each group: a GEO hiccup then sits at the end of the log where you
 # will see it, instead of scrolled past in the middle of a run that kept going for hours.
 for g in "${GROUP_DIRS[@]}"; do
@@ -170,6 +183,17 @@ if [ ${#FAILED[@]} -gt 0 ] || [ ${#META_FAILED[@]} -gt 0 ]; then
     [ ${#META_FAILED[@]} -eq 0 ] || printf '[FAIL] metadata: %s\n' "${META_FAILED[@]}" >&2
     echo "       Re-run the same command: finished runs are skipped, only these are retried." >&2
     exit 1
+fi
+
+if [ "$SUBMITTED" -gt 0 ]; then
+    cat <<MSG
+
+  $SUBMITTED conversion job(s) submitted. The FASTQ files are not there yet.
+
+      squeue -u \$USER
+      tail -f ${PIPELINE_ROOT}/logs/sra2fq_*.out
+
+MSG
 fi
 
 cat <<MSG

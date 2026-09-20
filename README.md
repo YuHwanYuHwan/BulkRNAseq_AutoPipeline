@@ -37,8 +37,8 @@ sbatch Scripts/run_pipeline.sh        rawData/ProjectA/GroupA
 ```
 
 Downloading runs where you typed it, because a compute node often has no route to the internet.
-The pipeline is submitted, because it takes hours and a shared machine expects it. On a machine
-with no scheduler, `bash` runs it just the same
+Unpacking what it downloaded does not need the internet, so that part is submitted for you, as
+the pipeline itself is. On a machine with no scheduler both run in the foreground
 ([section 5](#no-scheduler)).
 
 The runs of one series are usually consecutive, which is what `seq` is doing there. They do not
@@ -207,7 +207,8 @@ BulkRNAseq_AutoPipeline/
 ├── logs/                                   # SLURM job output
 │
 └── Scripts/                                # in the order they run
-    ├── PublicData_download.sh              # SRR accessions -> FASTQ in a group folder
+    ├── PublicData_download.sh              # SRR accessions -> archives in a group folder
+    ├── sra_to_fastq.sh                     # archives -> compressed FASTQ, submitted by the download
     ├── fetch_metadata.sh                   # GEO / BioSample -> metadata.tsv
     ├── list_samples.sh                     # print what the pipeline sees in a group
     │
@@ -453,8 +454,34 @@ Downloading needs internet access, which on a cluster usually means the login no
 compute node. A long run survives a dropped connection if you start it under `nohup` or in a
 `tmux` session.
 
-The script downloads the FASTQ files, compresses them, **groups runs into a subfolder when
-several belong to one sample**, and then collects the sample metadata.
+The script downloads one archive per run, **groups runs into a subfolder when several belong
+to one sample**, collects the sample metadata, and submits the unpacking.
+
+That last part is split off on purpose. Downloading is network-bound and has to run where you
+are logged in, since compute nodes often cannot reach the internet. Turning an archive into
+compressed FASTQ is neither: it reads a local file and writes a local file, using every core
+you give it for hours. Leaving that on a login node is what makes one person's download slow
+for everybody, so one job per group is submitted instead:
+
+```
+[GROUP] rawData/ProjectA/GroupA
+[GET ] SRR0000001 -> rawData/ProjectA/GroupA
+...
+Submitted batch job 77
+
+  1 conversion job(s) submitted. The FASTQ files are not there yet.
+
+      squeue -u $USER
+      tail -f logs/sra2fq_*.out
+```
+
+**Wait for those jobs before running the pipeline.** Until they finish, the group holds
+archives rather than reads. A run whose conversion fails keeps its archive, so re-running
+`sra_to_fastq.sh` on the group converts what is missing without downloading anything again:
+
+```bash
+bash Scripts/sra_to_fastq.sh rawData/ProjectA/GroupA
+```
 
 That grouping matters. A single GEO sample (GSM) is often split into several SRA runs (SRR).
 Treating each run as its own sample **inflates your sample count and halves the apparent

@@ -206,9 +206,52 @@ t_pipeline_spread() {
     grep -q 'not through the scheduler' <<< "$out" || { echo "no note about the scheduler: $out"; return 1; }
 }
 
+# Downloading leaves archives; converting them is what produces the reads. The .done flag has
+# to follow the reads, or a group whose conversion failed reads as finished for ever after.
+t_sra_to_fastq() {
+    local R="$TMP/repo4" G out
+    mkdir -p "$R/Scripts/lib" "$R/bin"
+    cp "$LIB/common.sh" "$R/Scripts/lib/"; cp "$LIB/../sra_to_fastq.sh" "$R/Scripts/"
+    cat > "$R/bin/fasterq-dump" <<'STUB'
+#!/bin/bash
+out=.; last=
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --outdir)  out="$2"; shift 2 ;;
+        --threads) shift 2 ;;
+        *)         last="$1"; shift ;;
+    esac
+done
+acc="$(basename "$last")"
+case "$acc" in SRR999*) exit 1 ;; esac      # the run that will not convert
+touch "$out/${acc}_1.fastq" "$out/${acc}_2.fastq"
+STUB
+    printf '#!/bin/bash\nfor a in "$@"; do case "$a" in -*) continue ;; esac; mv "$a" "$a.gz"; done\n' \
+        > "$R/bin/pigz"
+    chmod +x "$R/bin/fasterq-dump" "$R/bin/pigz"
+
+    G="$R/rawData/P/g"; mkdir -p "$G/SRR001" "$G/SRR999" "$G/SRR002" "$G/GSM_A/SRR003"
+    touch "$G/SRR001/SRR001.sra" "$G/SRR999/SRR999.sra" "$G/SRR002/SRR002.sra" \
+          "$G/GSM_A/SRR003/SRR003.sra"
+    touch "$G/.SRR002.done"                 # already converted on an earlier run
+
+    out=$(PATH="$R/bin:$PATH" bash "$R/Scripts/sra_to_fastq.sh" "$G" 2>&1) &&
+        { echo "a run that could not convert was reported as success"; return 1; }
+
+    [ -f "$G/.SRR001.done" ] && [ -f "$G/SRR001_1.fastq.gz" ] || { echo "SRR001 not converted: $out"; return 1; }
+    [ -f "$G/GSM_A/.SRR003.done" ]        || { echo "run inside a merge folder skipped: $out"; return 1; }
+    [ ! -e "$G/SRR001" ]                  || { echo "archive kept after converting"; return 1; }
+    [ ! -e "$G/SRR002" ]                  || { echo "archive of an already-done run kept"; return 1; }
+    [ ! -e "$G/.SRR999.done" ]            || { echo "failed run marked done"; return 1; }
+    [ -z "$(ls "$G"/SRR999*.fastq* 2>/dev/null)" ] || { echo "failed run left FASTQ behind"; return 1; }
+    # The archive is the expensive half. Keeping it means a retry converts rather than downloads.
+    [ -d "$G/SRR999" ]                    || { echo "archive of a failed run deleted"; return 1; }
+    grep -q '(1 already done)' <<< "$out"  || { echo "skip not counted: $out"; return 1; }
+}
+
 PASS=0; FAIL=0
 for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict \
-         t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread; do
+         t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread t_sra_to_fastq; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi
 done
