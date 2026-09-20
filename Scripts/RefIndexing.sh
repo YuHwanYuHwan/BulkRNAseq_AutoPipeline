@@ -37,7 +37,9 @@ fi
 rm -rf "$IDX_DIR"
 mkdir -p "$IDX_DIR"
 
-echo "[IDX ] building $SPECIES overhang=$OVERHANG"
+SA_NBASES="$(sa_index_nbases "$(stat -c %s "$FA")")"
+
+echo "[IDX ] building $SPECIES overhang=$OVERHANG genomeSAindexNbases=$SA_NBASES"
 echo "       FASTA $(basename "$FA")"
 echo "       GTF   $(basename "$GTF")"
 STAR --runMode genomeGenerate \
@@ -45,6 +47,7 @@ STAR --runMode genomeGenerate \
     --genomeFastaFiles "$FA" \
     --sjdbGTFfile "$GTF" \
     --sjdbOverhang "$OVERHANG" \
+    --genomeSAindexNbases "$SA_NBASES" \
     --runThreadN "$THREADS"
 
 [ -f "${IDX_DIR}/SAindex" ] || { echo "[ERROR] index build failed" >&2; rm -rf "$IDX_DIR"; exit 1; }

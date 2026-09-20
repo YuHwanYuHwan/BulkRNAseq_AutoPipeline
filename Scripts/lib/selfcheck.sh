@@ -122,6 +122,18 @@ t_probe_verdict() {
     done
 }
 
+# STAR's index size parameter. 14 suits a mammal and is wrong for anything small, and getting
+# it wrong costs memory and a warning rather than an error, so nothing would say so.
+t_sa_index() {
+    local v got
+    #      human 3.1 Gb        Arabidopsis 135 Mb   a 1 Mb genome   nonsense
+    for v in "3151425851 14" "135000000 12" "1000000 8" "0 1"; do
+        set -- $v
+        got=$(sa_index_nbases "$1")
+        [ "$got" = "$2" ] || { echo "${1} bytes -> $got (expected $2)"; return 1; }
+    done
+}
+
 # Several groups at once means a typo in the last one must surface before the first download,
 # not twelve hours into the night. Runs without any tool installed: the refusal is reached
 # before prefetch is ever called.
@@ -254,7 +266,7 @@ STUB
 }
 
 PASS=0; FAIL=0
-for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict \
+for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_sa_index \
          t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread t_sra_to_fastq; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi

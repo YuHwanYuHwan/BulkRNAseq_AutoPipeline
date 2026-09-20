@@ -124,6 +124,21 @@ strand_report() {   # $1 = *.gene.counts
         }' "$1"
 }
 
+# STAR's suffix-array index has a size parameter that must come down for a small genome.
+# The manual gives min(14, log2(GenomeLength)/2 - 1); the default 14 suits a mammal and on a
+# 120 Mb plant genome it wastes memory and draws a warning. The FASTA's size on disk stands in
+# for the genome length: newlines and headers inflate it by a couple of percent, which a
+# base-2 logarithm halved and floored does not notice.
+sa_index_nbases() {   # $1 = genome FASTA size in bytes
+    awk -v n="$1" 'BEGIN {
+        if (n < 2) n = 2
+        v = int(log(n)/log(2)/2 - 1)
+        if (v > 14) v = 14
+        if (v < 1)  v = 1
+        print v
+    }'
+}
+
 # __no_feature fraction from a -s reverse run -> strandedness, or nothing when the number
 # sits between the three cases. The bands leave gaps on purpose: touching cut points would
 # make 34% and 36% different answers off a difference that means nothing, and a wrong
