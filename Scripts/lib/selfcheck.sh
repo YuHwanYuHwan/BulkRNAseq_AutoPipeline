@@ -150,7 +150,9 @@ t_pipeline_multigroup() {
     printf '#!/bin/bash\necho "probed $1"\ncase "$1" in *P/a) exit 2 ;; esac\n' \
         > "$R/Scripts/probe_strandedness.sh"
 
-    rc=0; out=$(bash "$R/Scripts/run_pipeline.sh" "$R/rawData/P/a" "$R/rawData/P/b" 2>&1) || rc=$?
+    # env -u: the check itself may well be running inside a job, and SLURM_JOB_ID is what
+    # tells run_pipeline.sh to deal the groups out rather than work through them here.
+    rc=0; out=$(env -u SLURM_JOB_ID bash "$R/Scripts/run_pipeline.sh"                     "$R/rawData/P/a" "$R/rawData/P/b" 2>&1) || rc=$?
     [ "$rc" -eq 2 ]                                  || { echo "held run exited $rc (expected 2)"; return 1; }
     grep -q 'ran MultiQC on .*P/b' <<< "$out"        || { echo "group b did not finish after a held"; return 1; }
     grep -q 'ran ReadCount on .*P/a' <<< "$out"      && { echo "group a counted despite the hold"; return 1; }
@@ -199,7 +201,7 @@ t_pipeline_spread() {
     # One group has nothing to spread, and bash rather than sbatch must never submit anything.
     out=$(cd "$R" && PATH="$R/bin:$PATH" SLURM_JOB_ID=3 bash Scripts/run_pipeline.sh rawData/P/a 2>&1) || true
     grep -q '^SBATCH ' <<< "$out" && { echo "single group was spread"; return 1; }
-    out=$(cd "$R" && PATH="$R/bin:$PATH" bash Scripts/run_pipeline.sh rawData/P/a rawData/P/b 2>&1) || true
+    out=$(cd "$R" && PATH="$R/bin:$PATH" env -u SLURM_JOB_ID               bash Scripts/run_pipeline.sh rawData/P/a rawData/P/b 2>&1) || true
     grep -q '^SBATCH ' <<< "$out" && { echo "a foreground run submitted jobs"; return 1; }
     grep -q 'ran MultiQC on .*P/b' <<< "$out" || { echo "foreground run did not run the steps: $out"; return 1; }
     # ...but it should say so, since a scheduler is right there and this is usually a slip

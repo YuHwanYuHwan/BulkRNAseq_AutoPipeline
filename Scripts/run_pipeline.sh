@@ -14,7 +14,7 @@
 #   one job per node and each node then works through its share in order. Run with bash it
 #   never submits anything.
 #
-#   NODES  nodes to deal the groups out to. Default: every node sinfo reports.
+#   NODES  nodes to deal the groups out to. Default: the nodes of the job's own partition.
 #SBATCH --job-name=rnaseq
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=64G
@@ -61,8 +61,10 @@ fi
 REPO="$(cd "$1" && pwd)"; REPO="${REPO%%/rawData/*}"
 if [ $# -gt 1 ] && [ -n "${SLURM_JOB_ID:-}" ] && [ -z "${RNASEQ_LANE:-}" ] &&
    command -v sinfo >/dev/null 2>&1; then
-    read -ra NODE_LIST <<< "${NODES:-$(sinfo -h -N -o '%N' | sort -u | tr '
-' ' ')}"
+    # Within this job's own partition. A cluster that has one partition is unaffected; one
+    # that has ten would otherwise deal a lane to a GPU node the job cannot be submitted to.
+    PART=(); [ -z "${SLURM_JOB_PARTITION:-}" ] || PART=(-p "$SLURM_JOB_PARTITION")
+    read -ra NODE_LIST <<< "${NODES:-$(sinfo -h ${PART[@]+"${PART[@]}"} -N -o '%N' | sort -u | tr '\n' ' ')}"
     if [ ${#NODE_LIST[@]} -gt 1 ]; then
         # Dealt out in turn rather than cut into blocks: neighbouring groups tend to be the
         # ones most alike in size, so taking every Nth keeps the lanes closer in total.
@@ -76,10 +78,10 @@ if [ $# -gt 1 ] && [ -n "${SLURM_JOB_ID:-}" ] && [ -z "${RNASEQ_LANE:-}" ] &&
         cd "$REPO"      # the job log path in the directives is relative to where sbatch ran
         for n in "${NODE_LIST[@]}"; do
             [ -n "${LANE[$n]:-}" ] || continue          # more nodes than groups
-            echo "[NODE] $n <- $(tr ' ' '
-' <<< "${LANE[$n]}" | sed 's|.*/rawData/||' | paste -sd' ')"
+            echo "[NODE] $n <- $(tr ' ' '\n' <<< "${LANE[$n]}" | sed 's|.*/rawData/||' | paste -sd' ')"
             # Unquoted on purpose: each group must arrive as its own argument.
-            sbatch --export=ALL,RNASEQ_LANE=1 -w "$n" Scripts/run_pipeline.sh ${LANE[$n]}
+            sbatch --export=ALL,RNASEQ_LANE=1 ${PART[@]+"${PART[@]}"} -w "$n" \
+                   Scripts/run_pipeline.sh ${LANE[$n]}
         done
         exit 0
     fi
