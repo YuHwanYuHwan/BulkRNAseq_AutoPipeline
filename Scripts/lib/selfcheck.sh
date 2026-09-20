@@ -226,7 +226,9 @@ acc="$(basename "$last")"
 case "$acc" in SRR999*) exit 1 ;; esac      # the run that will not convert
 touch "$out/${acc}_1.fastq" "$out/${acc}_2.fastq"
 STUB
-    printf '#!/bin/bash\nfor a in "$@"; do case "$a" in -*) continue ;; esac; mv "$a" "$a.gz"; done\n' \
+    # -p takes a value, so skipping only what looks like a flag leaves the thread count behind
+    # as something to rename. Anything that is not an existing file is not one.
+    printf '#!/bin/bash\nfor a in "$@"; do [ -f "$a" ] && mv "$a" "$a.gz"; done\ntrue\n' \
         > "$R/bin/pigz"
     chmod +x "$R/bin/fasterq-dump" "$R/bin/pigz"
 
