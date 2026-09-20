@@ -22,23 +22,11 @@ set -euo pipefail
 RUNINFO_URL="https://trace.ncbi.nlm.nih.gov/Traces/sra-db-be/runinfo?acc="
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-# gzip is single-threaded and dominates the wall clock on a multi-GB FASTQ. pigz writes the
-# same format on N cores; plain gzip stays the fallback.
-command -v pigz >/dev/null 2>&1 && ZIP="pigz -p $THREADS" || ZIP="gzip"
-
 [ $# -ge 1 ] || { sed -n '2,13p' "$0"; exit 1; }
 
 # Every accession found anywhere in a file, duplicates dropped. Scraping rather than parsing
 # means a run table or a copied web page works without editing.
 scrape_accessions() { grep -oE '[SED]RR[0-9]+' "$1" | awk '!seen[$0]++'; }
-
-# Downloading only. Turning the archive into FASTQ is local work, and sra_to_fastq.sh does it
-# on a compute node once everything is here. Returns non-zero instead of aborting: over a
-# night of downloads a single expired link or a blip at NCBI must cost that run, not the
-# other forty.
-get_run() {   # $1=dest  $2=accession
-    prefetch --output-directory "$1" "$2" >/dev/null
-}
 
 download_group() {   # $1=group_dir, rest=accessions
     local GROUP_DIR="$1"; shift
@@ -91,10 +79,12 @@ download_group() {   # $1=group_dir, rest=accessions
 
         if is_done "$dest" "$acc"; then echo "[SKIP] $acc"; continue; fi
         echo "[GET ] $acc -> $dest"
-        if ! get_run "$dest" "$acc"; then
-            # Nothing half-downloaded left behind, so re-running the same command picks up
-            # exactly the runs that failed. The .done flag is written by the conversion, which
-            # is the point at which the reads actually exist.
+        # Downloading only: turning the archive into FASTQ is local work, and sra_to_fastq.sh
+        # does it on a compute node once everything is here.
+        if ! prefetch --output-directory "$dest" "$acc" >/dev/null; then
+            # Over a night of downloads one expired link must cost that run, not the other
+            # forty. Nothing half-downloaded is left behind, so re-running picks up exactly
+            # what failed; the .done flag belongs to the conversion, where the reads appear.
             rm -rf "${dest:?}/${acc}"
             echo "[FAIL] $acc" >&2
             FAILED+=("${GROUP_DIR}/${acc}")
@@ -158,8 +148,9 @@ done
 # directory, where lib/common.sh is not next to it.
 S="$(dirname "${BASH_SOURCE[0]}")"
 SUBMITTED=0
+command -v sbatch >/dev/null 2>&1 && HAVE_SBATCH=1 || HAVE_SBATCH=0
 for g in "${GROUP_DIRS[@]}"; do
-    if command -v sbatch >/dev/null 2>&1; then
+    if [ "$HAVE_SBATCH" = 1 ]; then
         (cd "$PIPELINE_ROOT" && mkdir -p logs &&
          sbatch -J sra2fq -c 8 --mem=16G -o "logs/sra2fq_%j.out"                 --wrap "bash '$S/sra_to_fastq.sh' '$g'") && SUBMITTED=$((SUBMITTED+1))
     else
@@ -170,7 +161,7 @@ done
 # Metadata last, not after each group: a GEO hiccup then sits at the end of the log where you
 # will see it, instead of scrolled past in the middle of a run that kept going for hours.
 for g in "${GROUP_DIRS[@]}"; do
-    bash "$(dirname "${BASH_SOURCE[0]}")/fetch_metadata.sh" "$g" || META_FAILED+=("$g")
+    bash "$S/fetch_metadata.sh" "$g" || META_FAILED+=("$g")
 done
 
 echo
@@ -185,16 +176,14 @@ if [ ${#FAILED[@]} -gt 0 ] || [ ${#META_FAILED[@]} -gt 0 ]; then
     exit 1
 fi
 
-if [ "$SUBMITTED" -gt 0 ]; then
-    cat <<MSG
+[ "$SUBMITTED" -eq 0 ] || cat <<MSG
 
-  $SUBMITTED conversion job(s) submitted. The FASTQ files are not there yet.
+  $SUBMITTED unpacking job(s) submitted. Until they finish the groups hold archives rather
+  than reads, and the pipeline has nothing to work on.
 
       squeue -u \$USER
       tail -f ${PIPELINE_ROOT}/logs/sra2fq_*.out
-
 MSG
-fi
 
 cat <<MSG
 
@@ -206,5 +195,5 @@ cat <<MSG
   2. <group>/group.conf is written for you, with the species taken from runinfo.
      Nothing else needs filling in - the probe records the strandedness itself.
 
-  3. bash Scripts/run_pipeline.sh ${GROUP_DIRS[0]}
+  3. sbatch Scripts/run_pipeline.sh ${GROUP_DIRS[0]}
 MSG
