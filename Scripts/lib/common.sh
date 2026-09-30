@@ -57,38 +57,100 @@ init_group() {
         done < "$CONF"
     fi
     mkdir -p "$PROC_DIR" "$OUT_DIR"
+
+    # Two files that resolve to one sample id share one .done marker: the first is processed,
+    # the rest are skipped as already finished, and the run reports success having dropped
+    # them. Nothing downstream can tell that apart from a group that really held one sample, so
+    # it has to stop here - every step script comes through init_group, and this is the only
+    # place that can end the step rather than warn from inside a process substitution.
+    local dup
+    dup="$(list_samples 2>/dev/null | cut -f1 | sort | uniq -d | paste -sd' ')"
+    if [ -n "$dup" ]; then
+        echo "[ERROR] one sample id comes from more than one place in $1: $dup" >&2
+        list_samples 2>/dev/null |
+            awk -F'\t' -v d=" $dup " '
+                index(d, " " $1 " ") { printf "          %s   R1=%s   R2=%s\n", $1, $2, $3 }' >&2
+        echo "        Rename them so each sample has one id, or put one sample's runs in a" >&2
+        echo "        folder named after that sample." >&2
+        exit 1
+    fi
+}
+
+# FASTQ filename -> the name with only its extension removed. Cutting at the first dot
+# instead turned Sample.L001_1.fastq.gz into "Sample", and so did every other lane of that
+# sample: one .done marker between them, all but the first skipped as already finished, and
+# the run reporting success having dropped three quarters of the data.
+fq_stem() {
+    local b="${1##*/}"
+    b="${b%.gz}"; b="${b%.fastq}"; b="${b%.fq}"
+    printf '%s' "$b"
+}
+
+# stem -> "sample_id<TAB>1|2", nothing at all when the name carries no read number.
+# Recognised: _1 _2 _R1 _R2, each optionally followed by a block of digits, which is what
+# bcl2fastq appends - Sample_S1_L001_R1_001.fastq.gz is the name a sequencing run arrives
+# under, and it used to be read as a single-end sample called Sample_S1_L001_R1_001.
+#
+# Two patterns rather than one with an optional tail: in a single pattern the first group grows
+# as far as it can and reads Sample_R1_00 plus read 1 out of Sample_R1_001.
+#
+# The list is closed on purpose. Pairing any two names that differ by a 1 and a 2 would also
+# marry Patient1.fastq.gz to Patient2.fastq.gz - two people, one sample.
+read_tag() {
+    [[ "$1" =~ ^(.+)_R?([12])$ ]] || [[ "$1" =~ ^(.+)_R?([12])_[0-9]+$ ]] || return 1
+    printf '%s\t%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 }
 
 # Sample list. One line per sample: sample_id<TAB>R1(comma-joined)<TAB>R2(comma-joined, empty if single-end)
 list_samples() {
-    local d f stem s
-    local r1 r2
-    # ls fails when a pattern matches nothing, and with pipefail that failure is the
-    # assignment's. Every caller runs with errexit, so an empty folder would end the
-    # function here - inside a process substitution, where it looks like no samples.
+    local d f s t id tag r1 r2
+    local -A R1_OF R2_OF SEEN
+    local -a ORDER
+
+    # A subdirectory is one sample, and everything inside it is that sample's runs to merge.
     for d in "$GROUP_DIR"/*/; do
         [ -d "$d" ] || continue
         s="$(basename "$d")"
-        r1="$(ls "$d"*_1.fastq* "$d"*_1.fq* 2>/dev/null | paste -sd, || true)"
-        r2="$(ls "$d"*_2.fastq* "$d"*_2.fq* 2>/dev/null | paste -sd, || true)"
-        # A merge folder can hold single-end runs, which have no _1 to find. Everything in it
-        # is then one sample's reads. Without this the pair comes back empty and the tools are
-        # handed a sample with no files: fastqc answers that by opening its window.
-        [ -n "$r1" ] || r1="$(ls "$d"*.fastq* "$d"*.fq* 2>/dev/null | paste -sd, || true)"
+        r1=""; r2=""
+        for f in "$d"*.fastq.gz "$d"*.fastq "$d"*.fq.gz "$d"*.fq; do
+            [ -e "$f" ] || continue
+            if t="$(read_tag "$(fq_stem "$f")")"; then
+                if [ "${t#*$'\t'}" = 2 ]; then r2="${r2:+$r2,}$f"; else r1="${r1:+$r1,}$f"; fi
+            else
+                # No read number anywhere in the name: a single-end run. A folder of _R1/_R2
+                # pairs used to land here for every file, be concatenated into one stream, and
+                # have every pair counted twice.
+                r1="${r1:+$r1,}$f"
+            fi
+        done
         [ -n "$r1" ] || { echo "[WARN] $s holds no FASTQ - skipped" >&2; continue; }
         printf '%s\t%s\t%s\n' "$s" "$r1" "$r2"
     done
+
+    # Flat files: the name says which sample and which read. Collected before anything is
+    # printed, so an R2 finds its R1 whatever order the shell hands the globs over in.
     for f in "$GROUP_DIR"/*.fastq.gz "$GROUP_DIR"/*.fastq "$GROUP_DIR"/*.fq.gz "$GROUP_DIR"/*.fq; do
         [ -e "$f" ] || continue
-        stem="$(basename "$f")"; stem="${stem%%.*}"
-        case "$stem" in
-            *_2) continue ;;                  # R2 is handled together with its R1
-            # Only a _1 stem can have a mate. Without this branch the substitution below is a
-            # no-op and ls returns the file itself, pairing a single-end read with itself.
-            *_1) printf '%s\t%s\t%s\n' "${stem%_1}" "$f" "$(ls "${f/_1./_2.}" 2>/dev/null || true)"
-                 continue ;;
-        esac
-        printf '%s\t%s\t\n' "$stem" "$f"
+        if t="$(read_tag "$(fq_stem "$f")")"; then
+            id="${t%$'\t'*}"; tag="${t#*$'\t'}"
+        else
+            id="$(fq_stem "$f")"; tag=1
+        fi
+        if [ "$tag" = 2 ]; then R2_OF[$id]="$f"; else R1_OF[$id]="$f"; fi
+        [ -n "${SEEN[$id]:-}" ] || { SEEN[$id]=1; ORDER+=("$id"); }
+    done
+
+    for id in ${ORDER[@]+"${ORDER[@]}"}; do
+        if [ -n "${R1_OF[$id]:-}" ]; then
+            printf '%s\t%s\t%s\n' "$id" "${R1_OF[$id]}" "${R2_OF[$id]:-}"
+        else
+            # Half a pair arrived. Said out loud and kept under its own file name rather than
+            # dropped: a sample that simply vanishes from the list leaves nobody anything to
+            # look for, and it was vanishing without a word.
+            s="$(fq_stem "${R2_OF[$id]}")"
+            echo "[WARN] $s: no R1 mate found - treated as single-end" >&2
+            printf '%s\t%s\t\n' "$s" "${R2_OF[$id]}"
+        fi
     done
 }
 

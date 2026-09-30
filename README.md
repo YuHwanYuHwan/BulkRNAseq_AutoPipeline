@@ -107,7 +107,8 @@ the table explains what happens inside them.
 
 - **read**: a short sequence fragment the sequencer read out (typically 50–150 bp). A FASTQ
   file holds tens of millions of them.
-- **paired-end**: both ends of the same fragment were read. Files arrive as `_1` and `_2`.
+- **paired-end**: both ends of the same fragment were read. Files arrive as `_1` and `_2`,
+  or `_R1` and `_R2`.
   If only one end was read it is **single-end** and there is a single file. The pipeline detects
   which one you have.
 
@@ -538,25 +539,42 @@ Just drop the FASTQ files into the group folder. **The filename is the sample na
 
 ```
 rawData/ProjectA/GroupA/
-    Control_1_1.fastq.gz       <- sample: Control_1 (paired-end)
-    Control_1_2.fastq.gz
-    Treated_1_1.fastq.gz       <- sample: Treated_1
+    Control_1_R1.fastq.gz      <- sample: Control_1 (paired-end)
+    Control_1_R2.fastq.gz
+    Treated_1_1.fastq.gz       <- sample: Treated_1  (_1/_2 works the same as _R1/_R2)
     Treated_1_2.fastq.gz
     Treated_2.fastq.gz         <- sample: Treated_2 (single-end)
     Control_2/                 <- folder name is the sample name; runs inside are merged
-        run_A_1.fastq.gz
-        run_A_2.fastq.gz
-        run_B_1.fastq.gz
-        run_B_2.fastq.gz
+        run_A_R1.fastq.gz
+        run_A_R2.fastq.gz
+        run_B_R1.fastq.gz
+        run_B_R2.fastq.gz
 ```
 
 There are only three rules.
 
 | Layout | Interpretation |
 |---|---|
-| Flat files `X_1.fastq.gz` + `X_2.fastq.gz` | Sample `X`, paired-end |
+| Flat files `X_1` + `X_2`, or `X_R1` + `X_R2` | Sample `X`, paired-end |
 | Flat file `X.fastq.gz` | Sample `X`, single-end |
 | Folder `X/` | Sample `X`, every run inside is merged |
+
+The read number may carry a trailing block of digits, which is what a sequencer adds, so
+`Sample_S1_L001_R1_001.fastq.gz` and its `_R2_001` mate are sample `Sample_S1_L001`,
+paired-end. Names can be copied off the facility's delivery unchanged.
+
+Only `_1 _2 _R1 _R2` count as read numbers, and only at the end of the name. Nothing else is
+guessed at: `Patient1.fastq.gz` and `Patient2.fastq.gz` are two single-end samples, because
+pairing any two names that differ by a 1 and a 2 would merge two people into one sample.
+
+Everything before the read number is the sample name, dots included, so
+`Sample.L001_1.fastq.gz` and `Sample.L002_1.fastq.gz` are **two different samples**. To treat
+several lanes as one sample, put them in a folder named after it - that is what the folder form
+is for.
+
+Two files that resolve to the same sample name stop the run before any work is done, naming
+what collided. They would otherwise share one `.done` marker: the first would be processed, the
+rest skipped as already finished, and the group would report success having dropped them.
 
 **There is no sample sheet.** The directory structure is the single source of truth. A separate
 sheet silently produces wrong results the moment it disagrees with the files on disk.
@@ -1105,8 +1123,10 @@ bash Scripts/lib/selfcheck.sh    # logic only
 
 This exercises sample scanning, merge grouping, `group.conf` parsing, overhang computation,
 matrix assembly, probe interpretation, the refusal to start a download when a group has no
-accession list, a held group not stopping the groups after it, and the deal across nodes. A
-stub scheduler stands in for SLURM, so that last one is checked on a machine that has none. **It runs with no bioinformatics tool installed**,
+accession list, a held group not stopping the groups after it, the deal across nodes, and the
+filenames a sequencing facility delivers - `_R1`/`_R2`, a trailing `_001`, dots in the sample
+name, half a pair, and a name that two files both claim. A stub scheduler stands in for SLURM,
+so the node deal is checked on a machine that has none. **It runs with no bioinformatics tool installed**,
 so you can verify the code right after cloning, and use it as a regression check after editing
 a script.
 

@@ -11,6 +11,19 @@ cp "$LIB/../PublicData_download.sh" "$ROOT/Scripts/"
 NO_STEP_LOG=1                                 # keep step timestamps out of the report
 source "$ROOT/Scripts/lib/common.sh"          # PIPELINE_ROOT now points at the fake repo
 
+# The sample list has to be read the way a step script reads it, not in this process: `set -e`
+# is what makes a failing `ls` inside an assignment end a function, and it ends it quietly,
+# because the list comes back through a process substitution. Called from here, where errexit
+# is off, the check passes on code that hands the tools nothing. init_group can exit too, and
+# that exit has to land somewhere other than the middle of this script.
+printf '#!/bin/bash
+set -euo pipefail
+NO_STEP_LOG=1
+source "%s/Scripts/lib/common.sh"
+init_group "$1"
+list_samples
+'         "$ROOT" > "$ROOT/Scripts/_list.sh"
+
 # The step scripts the pipeline calls, stubbed out by the tests that drive run_pipeline.sh
 STEPS_STUB=(FastQC Trimming Alignment probe_strandedness ReadCount CalcCPM MultiQC)
 
@@ -22,17 +35,6 @@ t_list_samples() {
           "$G/GSM_B/SRR003_1.fastq.gz" "$G/GSM_B/SRR003_2.fastq.gz" \
           "$G/GSM_C/SRR004.fastq.gz" "$G/GSM_C/SRR005.fastq.gz"   # merged, single-end
     init_group "$G"
-    # Run the way a step script runs it, not in this process: `set -e` is what makes a failing
-    # `ls` inside an assignment end the function, and it ends it quietly, because the list is
-    # read through a process substitution. Calling the function from here, where errexit is
-    # off, the check passes on code that hands the tools nothing.
-    printf '#!/bin/bash
-set -euo pipefail
-NO_STEP_LOG=1
-source "%s/Scripts/lib/common.sh"
-init_group "$1"
-list_samples
-'         "$ROOT" > "$ROOT/Scripts/_list.sh"
     local out; out=$(bash "$ROOT/Scripts/_list.sh" "$G" 2>/dev/null | sort)
     [ "$(grep -c . <<< "$out")" -eq 4 ]                                  || { echo "sample count $(grep -c . <<< "$out") != 4"; return 1; }
     grep '^GSM_B' <<< "$out" | grep -q 'SRR002_1.*,.*SRR003_1'           || { echo "GSM_B runs not merged"; return 1; }
@@ -317,8 +319,65 @@ STUB
     grep -q '(1 already done)' <<< "$out"  || { echo "skip not counted: $out"; return 1; }
 }
 
+# The names a sequencing facility actually delivers. Every case here was mishandled before:
+# _R1/_R2 was not a pair, so paired-end arrived as two single-end samples and R2 was trimmed
+# with R1's adapter; a dot in the name truncated the id, so every lane of one sample collided
+# on a single .done marker and all but the first were skipped as finished; and an R2 whose R1
+# never arrived disappeared from the list without a word.
+t_list_samples_naming() {
+    local G="$ROOT/rawData/P/g7" out n
+    mkdir -p "$G/MERGED"
+    touch "$G/A_R1.fastq.gz" "$G/A_R2.fastq.gz" \
+          "$G/Sample_S1_L001_R1_001.fastq.gz" "$G/Sample_S1_L001_R2_001.fastq.gz" \
+          "$G/B.L001_1.fastq.gz" "$G/B.L001_2.fastq.gz" \
+          "$G/B.L002_1.fastq.gz" "$G/B.L002_2.fastq.gz" \
+          "$G/C_2.fastq.gz" \
+          "$G/Patient1.fastq.gz" "$G/Patient2.fastq.gz" \
+          "$G/MERGED/x_R1.fastq.gz" "$G/MERGED/x_R2.fastq.gz"
+    out=$(bash "$ROOT/Scripts/_list.sh" "$G" 2>/dev/null)
+
+    paired() {   # sample id, then a fragment each of the R1 and R2 names it must hold
+        awk -F'\t' -v s="$1" -v a="$2" -v b="$3" \
+            '$1==s && index($2,a) && index($3,b) { f=1 } END { exit !f }' <<< "$out"
+    }
+    single() { awk -F'\t' -v s="$1" '$1==s && $3=="" { f=1 } END { exit !f }' <<< "$out"; }
+
+    paired A A_R1.fastq.gz A_R2.fastq.gz ||
+        { echo "_R1/_R2 not paired"; return 1; }
+    paired Sample_S1_L001 _R1_001.fastq.gz _R2_001.fastq.gz ||
+        { echo "bcl2fastq name Sample_S1_L001_R1_001 not paired"; return 1; }
+    paired B.L001 B.L001_1.fastq.gz B.L001_2.fastq.gz ||
+        { echo "a dot in the name broke the id or the pairing"; return 1; }
+    paired B.L002 B.L002_1.fastq.gz B.L002_2.fastq.gz ||
+        { echo "the second lane did not get a sample id of its own"; return 1; }
+    paired MERGED x_R1.fastq.gz x_R2.fastq.gz ||
+        { echo "merge folder of _R1/_R2 not paired - concatenated, every pair counted twice"; return 1; }
+    # An orphan R2 keeps its own file name, so it cannot collide with the id it was stripped to.
+    single C_2 || { echo "an R2 with no mate was dropped instead of reported"; return 1; }
+    # ...and the closed suffix list is what keeps two people from becoming one sample.
+    single Patient1 && single Patient2 ||
+        { echo "Patient1/Patient2 were paired - they are separate samples"; return 1; }
+
+    n=$(grep -c . <<< "$out")
+    [ "$n" -eq 8 ] || { echo "sample count $n != 8"; return 1; }
+}
+
+# Two files that resolve to one sample id share one .done marker, so all but the first are
+# skipped as already finished and the group reports success short of its data. Nothing
+# downstream can tell that apart from a group that really held one sample, so init_group has
+# to refuse - and name what collided, since the whole failure mode is that it looks fine.
+t_duplicate_sample_id() {
+    local G="$ROOT/rawData/P/g8" out rc
+    mkdir -p "$G/A"
+    touch "$G/A_1.fastq.gz" "$G/A_2.fastq.gz" "$G/A/z_1.fastq.gz"
+    rc=0; out=$(bash "$ROOT/Scripts/_list.sh" "$G" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ]                          || { echo "a duplicate sample id was accepted: $out"; return 1; }
+    grep -q 'more than one place' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
+    grep -q 'A_1.fastq.gz' <<< "$out"        || { echo "the colliding files are not named: $out"; return 1; }
+}
+
 PASS=0; FAIL=0
-for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_sa_index \
+for t in t_list_samples t_list_samples_naming t_duplicate_sample_id t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_sa_index \
          t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread t_sra_to_fastq \
          t_ena_runinfo t_probe_respects_conf; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
