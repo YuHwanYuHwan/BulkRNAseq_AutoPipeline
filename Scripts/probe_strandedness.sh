@@ -18,8 +18,22 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 init_group "$1"
 
 : "${species:?group.conf must define species}"
+
+# An answer already in group.conf is the answer. Without this the probe recomputes the same
+# borderline number, strand_call returns nothing again, and it exits 2 again: the recovery this
+# script itself prints - record the value and run the same command - could never work, and a
+# held group stayed held for ever. It also saves counting a sample again on every resume.
+case "${strandedness:-}" in
+    no|yes|reverse)
+        echo "[PROBE] group.conf already says strandedness = $strandedness, nothing to measure"
+        exit 0 ;;
+esac
+
 ALIGN="${PROC_DIR}/Alignment_result"
-GTF="$(ls "${REF_ROOT}/${species}"/*.gtf 2>/dev/null | head -1)"
+# || true: a pattern matching nothing makes ls exit non-zero, pipefail makes that the
+# assignment's status, and errexit then kills the script BEFORE the guard below can say
+# what is actually wrong. A missing GTF was reporting itself as a strandedness hold.
+GTF="$(ls "${REF_ROOT}/${species}"/*.gtf 2>/dev/null | head -1 || true)"
 [ -n "$GTF" ] || { echo "[ERROR] no GTF for $species" >&2; exit 1; }
 
 read -r SAMPLE _ _ < <(list_samples)

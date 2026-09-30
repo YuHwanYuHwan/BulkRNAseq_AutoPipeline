@@ -326,7 +326,7 @@ often as you like.
 == disk ==
   [ OK ] 75826G free
 == self-check ==
-  [ OK ] logic 6/6
+  [ OK ] logic 13/13
 
 Ready. Next: put FASTQ under rawData/<project>/<group>/ and write group.conf (species).
 ```
@@ -334,7 +334,7 @@ Ready. Next: put FASTQ under rawData/<project>/<group>/ and write group.conf (sp
 Fix every `[MISS]` before going further. The point of this script is to keep you from
 **discovering at hour six of a STAR run that the reference genome was never there.**
 
-`[ OK ] logic 6/6` is the pipeline checking its own logic. It runs with no bioinformatics tool
+`[ OK ] logic 13/13` is the pipeline checking its own logic. It runs with no bioinformatics tool
 installed at all, so you can confirm the code is sound right after cloning.
 
 <details>

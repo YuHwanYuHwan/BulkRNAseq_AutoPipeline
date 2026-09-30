@@ -122,6 +122,26 @@ t_probe_verdict() {
     done
 }
 
+# A held group is recovered by writing the strandedness and running the same command again,
+# which is what the probe itself prints. That only works if the probe stands aside when the
+# answer is already there - otherwise it recomputes the same borderline number and holds again.
+t_probe_respects_conf() {
+    local R="$TMP/repo6" G out rc
+    mkdir -p "$R/Scripts/lib"
+    cp "$LIB/common.sh" "$R/Scripts/lib/"; cp "$LIB/../probe_strandedness.sh" "$R/Scripts/"
+    G="$R/rawData/P/g"; mkdir -p "$G"
+    # No BAM, no GTF, no reference at all: reaching any of those means it did not stand aside.
+    printf 'species      = Homo_sapiens\nstrandedness = no\n' > "$G/group.conf"
+    rc=0; out=$(bash "$R/Scripts/probe_strandedness.sh" "$G" 2>&1) || rc=$?
+    [ "$rc" -eq 0 ] || { echo "held again with a recorded answer (rc=$rc): $out"; return 1; }
+    grep -q 'already says strandedness = no' <<< "$out" || { echo "unclear message: $out"; return 1; }
+
+    # An empty value must NOT be taken as an answer - that is the case the probe exists for.
+    printf 'species      = Homo_sapiens\nstrandedness =\n' > "$G/group.conf"
+    rc=0; out=$(bash "$R/Scripts/probe_strandedness.sh" "$G" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || { echo "an empty strandedness was accepted as an answer: $out"; return 1; }
+}
+
 # STAR's index size parameter. 14 suits a mammal and is wrong for anything small, and getting
 # it wrong costs memory and a warning rather than an error, so nothing would say so.
 t_sa_index() {
@@ -300,7 +320,7 @@ STUB
 PASS=0; FAIL=0
 for t in t_list_samples t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_sa_index \
          t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread t_sra_to_fastq \
-         t_ena_runinfo; do
+         t_ena_runinfo t_probe_respects_conf; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))
     else FAIL=$((FAIL+1)); printf '%s: %s\n' "${t#t_}" "${msg:-failed}" >&2; fi
 done

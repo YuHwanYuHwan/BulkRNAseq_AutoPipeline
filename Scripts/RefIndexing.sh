@@ -14,8 +14,8 @@ SP_DIR="${REF_ROOT}/${SPECIES}"
 IDX_DIR="${SP_DIR}/index/overhang${OVERHANG}"
 
 [ -d "$SP_DIR" ] || { echo "[ERROR] $SP_DIR not found. Download the genome first (see README)." >&2; exit 1; }
-FA="$(ls "$SP_DIR"/*.dna.*.fa 2>/dev/null | head -1)"
-GTF="$(ls "$SP_DIR"/*.gtf 2>/dev/null | head -1)"
+FA="$(ls "$SP_DIR"/*.dna.*.fa 2>/dev/null | head -1 || true)"
+GTF="$(ls "$SP_DIR"/*.gtf 2>/dev/null | head -1 || true)"
 [ -n "$FA" ]  || { echo "[ERROR] no genome FASTA in $SP_DIR" >&2; exit 1; }
 [ -n "$GTF" ] || { echo "[ERROR] no GTF in $SP_DIR" >&2; exit 1; }
 

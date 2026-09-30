@@ -10,8 +10,8 @@ init_group "$1"
 
 multiqc "$PROC_DIR" -o "$OUT_DIR" -n "${GROUP}_multiqc_report" -f -q
 
-GTF="$(ls "${REF_ROOT}/${species}"/*.gtf | head -1)"
-FA="$(ls "${REF_ROOT}/${species}"/*.dna.*.fa 2>/dev/null | head -1)"
+GTF="$(ls "${REF_ROOT}/${species}"/*.gtf 2>/dev/null | head -1 || true)"
+FA="$(ls "${REF_ROOT}/${species}"/*.dna.*.fa 2>/dev/null | head -1 || true)"
 OVERHANG="$(cat "${PROC_DIR}/.overhang" 2>/dev/null || echo '?')"
 PROBE="$(cat "${PROC_DIR}/.strandprobe" 2>/dev/null || true)"
 # What the strandedness was decided on, kept next to the value it produced. Absent when
@@ -33,7 +33,12 @@ RELEASE=$(basename "$GTF" | sed -E 's/.*\.([0-9]+)\.gtf/\1/')
 # reads as prose rather than as a directory name.
 BUILD=$(basename "${FA:-}" | cut -d. -f2)
 SPECIES_PROSE="${species//_/ }"
-READLEN=$((OVERHANG + 1))
+# OVERHANG is '?' when Processed/ has been cleared, which section 8 says is fine to do. Doing
+# arithmetic on '?' is a syntax error, and under errexit that left a 0-byte report behind.
+case "$OVERHANG" in
+    ''|*[!0-9]*) READLEN='?' ;;
+    *)           READLEN=$((OVERHANG + 1)) ;;
+esac
 case "$strandedness" in
     no)      STRAND_PROSE="unstranded mode" ;;
     reverse) STRAND_PROSE="reverse-stranded mode" ;;

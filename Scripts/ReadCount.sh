@@ -19,7 +19,8 @@ esac
 ALIGN="${PROC_DIR}/Alignment_result"
 OUT="${PROC_DIR}/HTseqCount_result"
 mkdir -p "$OUT"
-GTF="$(ls "${REF_ROOT}/${species}"/*.gtf | head -1)"
+GTF="$(ls "${REF_ROOT}/${species}"/*.gtf 2>/dev/null | head -1 || true)"
+[ -n "$GTF" ] || { echo "[ERROR] no GTF for $species in ${REF_ROOT}/${species}" >&2; exit 1; }
 
 # Counting a sample already recorded under a different strandedness would be skipped by its
 # .done marker, quietly mixing two settings in one matrix. Changing the value starts over.
