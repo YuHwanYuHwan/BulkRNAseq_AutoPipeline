@@ -8,6 +8,7 @@ ROOT="$TMP/repo"; mkdir -p "$ROOT/Scripts/lib"
 LIB="$(dirname "${BASH_SOURCE[0]}")"
 cp "$LIB/common.sh" "$ROOT/Scripts/lib/"
 cp "$LIB/../PublicData_download.sh" "$ROOT/Scripts/"
+cp "$LIB/../list_samples.sh" "$ROOT/Scripts/"
 NO_STEP_LOG=1                                 # keep step timestamps out of the report
 source "$ROOT/Scripts/lib/common.sh"          # PIPELINE_ROOT now points at the fake repo
 
@@ -372,12 +373,112 @@ t_duplicate_sample_id() {
     touch "$G/A_1.fastq.gz" "$G/A_2.fastq.gz" "$G/A/z_1.fastq.gz"
     rc=0; out=$(bash "$ROOT/Scripts/_list.sh" "$G" 2>&1) || rc=$?
     [ "$rc" -ne 0 ]                          || { echo "a duplicate sample id was accepted: $out"; return 1; }
-    grep -q 'more than one place' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
-    grep -q 'A_1.fastq.gz' <<< "$out"        || { echo "the colliding files are not named: $out"; return 1; }
+    grep -q 'more than one file resolves' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
+    grep -qw 'A' <<< "$out"                  || { echo "the colliding id is not named: $out"; return 1; }
+    grep -q 'list_samples.sh' <<< "$out"     || { echo "nothing says how to see what collided: $out"; return 1; }
+
+    # That message points at list_samples.sh, so the script has to print the group AND reach the
+    # same verdict. A pre-flight look that passes a layout the pipeline refuses is worse than none.
+    rc=0; out=$(bash "$ROOT/Scripts/list_samples.sh" "$G" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || { echo "list_samples.sh passed a layout every step refuses"; return 1; }
+    grep -q 'more than one file resolves' <<< "$out" || { echo "list_samples.sh did not say what is wrong: $out"; return 1; }
+    [ "$(grep -c '^A	' <<< "$out")" -eq 2 ] || { echo "list_samples.sh did not print both rows: $out"; return 1; }
+}
+
+# fasterq-dump --split-3, which Scripts/sra_to_fastq.sh runs, writes a third file holding the
+# reads whose mate is missing. A public group therefore holds SRR_1, SRR_2 and a bare SRR: one
+# paired sample, not a read-1 collision and not a second sample. The bare file has to stay out
+# of R1 as well, or R1 comes out longer than R2 and cutadapt stops on the mismatch hours later.
+t_split3() {
+    local G="$ROOT/rawData/P/g11" M="$ROOT/rawData/P/g12" out
+    mkdir -p "$G" "$M/GSM_A"
+    touch "$G/SRR7777777_1.fastq.gz" "$G/SRR7777777_2.fastq.gz" "$G/SRR7777777.fastq.gz"
+    out=$(bash "$ROOT/Scripts/_list.sh" "$G" 2>&1) ||
+        { echo "the --split-3 layout was refused: $out"; return 1; }
+    [ "$(grep -c '^SRR' <<< "$out")" -eq 1 ] || { echo "not one sample: $out"; return 1; }
+    awk -F'\t' '$1=="SRR7777777" && $2 ~ /_1\.fastq\.gz$/ && $3 ~ /_2\.fastq\.gz$/ { f=1 }
+                END { exit !f }' <<< "$out" || { echo "the pair is not the pair: $out"; return 1; }
+    # A step's log gets the count; list_samples.sh gets the file name. A line per sample from
+    # every step would be the same forty lines eight times over in one group's log.
+    grep -q '1 sample(s) hold unmated reads' <<< "$out" ||
+        { echo "the third file was taken in silence: $out"; return 1; }
+    out=$(bash "$ROOT/Scripts/list_samples.sh" "$G" 2>&1)
+    grep -q 'unmated reads not used: .*SRR7777777.fastq.gz' <<< "$out" ||
+        { echo "list_samples.sh did not name the unused file: $out"; return 1; }
+
+    # Same inside a merge folder, where R1 and R2 are lists that must stay the same length.
+    touch "$M/GSM_A/SRR001_1.fastq.gz" "$M/GSM_A/SRR001_2.fastq.gz" "$M/GSM_A/SRR001.fastq.gz" \
+          "$M/GSM_A/SRR002_1.fastq.gz" "$M/GSM_A/SRR002_2.fastq.gz"
+    out=$(bash "$ROOT/Scripts/_list.sh" "$M" 2>&1) || { echo "merge folder refused: $out"; return 1; }
+    awk -F'\t' '$1=="GSM_A" { f=(split($2,a,",")==2 && split($3,b,",")==2) } END { exit !f }' <<< "$out" ||
+        { echo "R1 and R2 came out different lengths - cutadapt would stop on it: $out"; return 1; }
+
+    # Nothing is unmated when there is no pair to be unmated from. A bare name beside a lone
+    # read 2 becomes that sample's R1, and announcing it as unused while using it as R1 was a
+    # straight contradiction in the log.
+    local C="$ROOT/rawData/P/g14"; mkdir -p "$C"
+    touch "$C/C.fastq.gz" "$C/C_2.fastq.gz"
+    out=$(bash "$ROOT/Scripts/_list.sh" "$C" 2>&1) || { echo "refused: $out"; return 1; }
+    grep -q 'unmated' <<< "$out" && { echo "called a file unused and then used it as R1: $out"; return 1; }
+    awk -F'\t' '$1=="C" && $2 ~ /C\.fastq\.gz$/ && $3 ~ /C_2\.fastq\.gz$/ { f=1 } END { exit !f }' <<< "$out" ||
+        { echo "C was not paired with C_2: $out"; return 1; }
+
+    # A merge folder holding only read 2 holds FASTQ, whatever is missing. Reporting it as
+    # empty dropped the sample and every step then said 0 samples and stopped.
+    local O="$ROOT/rawData/P/g15"; mkdir -p "$O/SampleX"
+    touch "$O/SampleX/SampleX_R2.fastq.gz"
+    out=$(bash "$ROOT/Scripts/_list.sh" "$O" 2>&1) || { echo "refused: $out"; return 1; }
+    grep -q 'holds no FASTQ' <<< "$out" && { echo "a folder with reads in it was called empty: $out"; return 1; }
+    awk -F'\t' '$1=="SampleX" && $2 ~ /_R2\.fastq\.gz$/ && $3=="" { f=1 } END { exit !f }' <<< "$out" ||
+        { echo "read 2 alone was not kept as single-end: $out"; return 1; }
+}
+
+# One file per sample per read. D_1.fastq.gz beside D_R1_001.fastq.gz both mean sample D read
+# 1: the second used to overwrite the first in the map and the first was never processed, with
+# nothing said about it. It stops the run now, and names the two files.
+t_read_collision() {
+    local G="$ROOT/rawData/P/g9" out rc
+    mkdir -p "$G"
+    touch "$G/D_1.fastq.gz" "$G/D_2.fastq.gz" "$G/D_R1_001.fastq.gz"
+
+    rc=0; out=$(bash "$ROOT/Scripts/_list.sh" "$G" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || { echo "two files claiming one read were accepted: $out"; return 1; }
+    grep -q 'read 1 is claimed by two files' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
+    grep -q 'D_1.fastq.gz'      <<< "$out" || { echo "first claimant not named: $out"; return 1; }
+    grep -q 'D_R1_001.fastq.gz' <<< "$out" || { echo "second claimant not named: $out"; return 1; }
+
+    # Every refusal points at list_samples.sh, so that script has to print the group rather
+    # than be refused by the very check whose message sent you to it.
+    out=$(bash "$ROOT/Scripts/list_samples.sh" "$G" 2>/dev/null) || true
+    grep -q '^D	' <<< "$out" || { echo "list_samples.sh printed nothing for a group it is meant to diagnose"; return 1; }
+
+    # A name with no read number can collide just as well, and did: BARE_OF was the one map
+    # without this check, so A.fq.gz quietly replaced A.fastq.gz and one row came out.
+    local T="$ROOT/rawData/P/g13"; mkdir -p "$T"
+    touch "$T/A.fastq.gz" "$T/A.fq.gz"
+    rc=0; out=$(bash "$ROOT/Scripts/_list.sh" "$T" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || { echo "two files claiming one untagged sample were accepted: $out"; return 1; }
+    grep -q 'sample A is claimed by two files' <<< "$out" || { echo "unhelpful message: $out"; return 1; }
+    grep -q 'folder named' <<< "$out" || { echo "the message does not say what to do: $out"; return 1; }
+
+    # bcl2fastq splits a large read into chunks, which claim one read of one sample between
+    # them. Refusing is right - a sample whose reads come in several files belongs in a folder -
+    # but HEAD kept the last chunk and dropped the rest without a word.
+    local K="$ROOT/rawData/P/g16"; mkdir -p "$K"
+    touch "$K/Samp_S1_L001_R1_001.fastq.gz" "$K/Samp_S1_L001_R1_002.fastq.gz"
+    rc=0; out=$(bash "$ROOT/Scripts/_list.sh" "$K" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || { echo "a chunked read was taken as one file: $out"; return 1; }
+    grep -q '_R1_001' <<< "$out" || { echo "the dropped chunk is not named: $out"; return 1; }
+
+    # ...and several files per read inside a merge folder is the ordinary case, not a collision.
+    local M="$ROOT/rawData/P/g10"; mkdir -p "$M/S"
+    touch "$M/S/r1_1.fastq.gz" "$M/S/r1_2.fastq.gz" "$M/S/r2_1.fastq.gz" "$M/S/r2_2.fastq.gz"
+    out=$(bash "$ROOT/Scripts/_list.sh" "$M" 2>&1) || { echo "a merge folder was read as a collision: $out"; return 1; }
+    grep -q 'r1_1.*,.*r2_1' <<< "$out" || { echo "merge folder not merged: $out"; return 1; }
 }
 
 PASS=0; FAIL=0
-for t in t_list_samples t_list_samples_naming t_duplicate_sample_id t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_sa_index \
+for t in t_list_samples t_list_samples_naming t_duplicate_sample_id t_read_collision t_split3 t_groupconf t_overhang t_grouping t_matrix t_probe_verdict t_sa_index \
          t_multigroup_preflight t_pipeline_multigroup t_pipeline_spread t_sra_to_fastq \
          t_ena_runinfo t_probe_respects_conf; do
     if msg=$("$t" 2>&1); then PASS=$((PASS+1))

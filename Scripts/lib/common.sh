@@ -1,7 +1,7 @@
 # common.sh - shared helpers sourced by every step script.
 # Contract: each step takes ONE group directory. Directory layout is the source of truth.
 #   subdirectory present -> directory name = sample_id, FASTQs inside are merged
-#   flat FASTQ files     -> filename stem (minus _1/_2) = sample_id
+#   flat FASTQ files     -> the name minus its extension and its read number = sample_id
 
 PIPELINE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ -f "${PIPELINE_ROOT}/config.sh" ] && source "${PIPELINE_ROOT}/config.sh"
@@ -63,30 +63,45 @@ init_group() {
     # them. Nothing downstream can tell that apart from a group that really held one sample, so
     # it has to stop here - every step script comes through init_group, and this is the only
     # place that can end the step rather than warn from inside a process substitution.
-    local dup
-    dup="$(list_samples 2>/dev/null | cut -f1 | sort | uniq -d | paste -sd' ')"
-    if [ -n "$dup" ]; then
-        echo "[ERROR] one sample id comes from more than one place in $1: $dup" >&2
-        list_samples 2>/dev/null |
-            awk -F'\t' -v d=" $dup " '
-                index(d, " " $1 " ") { printf "          %s   R1=%s   R2=%s\n", $1, $2, $3 }' >&2
-        echo "        Rename them so each sample has one id, or put one sample's runs in a" >&2
-        echo "        folder named after that sample." >&2
+    # LIST_ONLY means a person is looking at the group rather than a step processing it, and
+    # list_samples.sh sets it. It has to print the group before saying what is wrong with it,
+    # since these messages are what send you there in the first place.
+    [ -z "${LIST_ONLY:-}" ] || return 0
+
+    local out
+    # On the error path only, run it again with stderr showing: the happy path must not print
+    # every [WARN] twice, once here and once in the step's own run.
+    out="$(list_samples 2>/dev/null)" || { list_samples >/dev/null; exit 1; }
+    check_sample_ids "$out" "$1" || {
+        echo "            bash Scripts/list_samples.sh $1" >&2
         exit 1
-    fi
+    }
 }
 
-# FASTQ filename -> the name with only its extension removed. Cutting at the first dot
-# instead turned Sample.L001_1.fastq.gz into "Sample", and so did every other lane of that
-# sample: one .done marker between them, all but the first skipped as already finished, and
-# the run reporting success having dropped three quarters of the data.
+# Sample ids must be unique: two files that resolve to one id share one .done marker, so the
+# first is processed, the rest are skipped as already finished, and the run reports success
+# having dropped them. Nothing downstream can tell that apart from a group that really held one
+# sample. A function rather than four lines inside init_group so that list_samples.sh reaches
+# the same verdict after printing the group, instead of passing it in silence.
+check_sample_ids() {   # $1 = list_samples output, $2 = group dir
+    local dup
+    dup="$(cut -f1 <<< "$1" | sort | uniq -d | paste -sd' ')"
+    [ -n "$dup" ] || return 0
+    echo "[ERROR] more than one file resolves to each of these sample ids in $2: $dup" >&2
+    echo "        Rename them so every sample has an id of its own, or put one sample's runs" >&2
+    echo "        in a folder named after it.  What collided:" >&2
+    return 1
+}
+
+# Only the extension comes off. Cutting at the first dot instead merged every lane of
+# Sample.L001_1.fastq.gz into one sample id, and one .done marker between them.
 fq_stem() {
     local b="${1##*/}"
     b="${b%.gz}"; b="${b%.fastq}"; b="${b%.fq}"
     printf '%s' "$b"
 }
 
-# stem -> "sample_id<TAB>1|2", nothing at all when the name carries no read number.
+# A stem split into the sample it belongs to and which read of the pair it is.
 # Recognised: _1 _2 _R1 _R2, each optionally followed by a block of digits, which is what
 # bcl2fastq appends - Sample_S1_L001_R1_001.fastq.gz is the name a sequencing run arrives
 # under, and it used to be read as a single-end sample called Sample_S1_L001_R1_001.
@@ -96,34 +111,60 @@ fq_stem() {
 #
 # The list is closed on purpose. Pairing any two names that differ by a 1 and a 2 would also
 # marry Patient1.fastq.gz to Patient2.fastq.gz - two people, one sample.
-read_tag() {
-    [[ "$1" =~ ^(.+)_R?([12])$ ]] || [[ "$1" =~ ^(.+)_R?([12])_[0-9]+$ ]] || return 1
-    printf '%s\t%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+# Two files claiming the same reads of the same sample. Chunked deliveries land here too -
+# bcl2fastq splits a large read into _R1_001, _R1_002 - and the way out is the same for both:
+# a sample whose reads come in several files is what a merge folder is for.
+claim_clash() {   # $1 = what is claimed twice, $2 and $3 = the two files
+    echo "[ERROR] sample $1 is claimed by two files:" >&2
+    echo "        $2" >&2
+    echo "        $3" >&2
+    echo "        Keep one file per read, or put a sample's several files in a folder named" >&2
+    echo "        after that sample, where they are merged." >&2
+}
+
+read_tag() {   # stem -> RT_ID and RT_TAG; RT_TAG is empty when the name has no read number
+    RT_ID="$1"; RT_TAG=
+    [[ "$1" =~ ^(.+)_R?([12])$ ]] || [[ "$1" =~ ^(.+)_R?([12])_[0-9]+$ ]] || return 0
+    RT_ID="${BASH_REMATCH[1]}"; RT_TAG="${BASH_REMATCH[2]}"
 }
 
 # Sample list. One line per sample: sample_id<TAB>R1(comma-joined)<TAB>R2(comma-joined, empty if single-end)
 list_samples() {
-    local d f s t id tag r1 r2
-    local -A R1_OF R2_OF SEEN
+    local d f s id r1 r2 bare RT_ID RT_TAG rc=0 aside=0
+    local -A R1_OF R2_OF BARE_OF
     local -a ORDER
 
     # A subdirectory is one sample, and everything inside it is that sample's runs to merge.
     for d in "$GROUP_DIR"/*/; do
         [ -d "$d" ] || continue
         s="$(basename "$d")"
-        r1=""; r2=""
+        r1=""; r2=""; bare=""
         for f in "$d"*.fastq.gz "$d"*.fastq "$d"*.fq.gz "$d"*.fq; do
             [ -e "$f" ] || continue
-            if t="$(read_tag "$(fq_stem "$f")")"; then
-                if [ "${t#*$'\t'}" = 2 ]; then r2="${r2:+$r2,}$f"; else r1="${r1:+$r1,}$f"; fi
-            else
-                # No read number anywhere in the name: a single-end run. A folder of _R1/_R2
-                # pairs used to land here for every file, be concatenated into one stream, and
-                # have every pair counted twice.
-                r1="${r1:+$r1,}$f"
-            fi
+            read_tag "$(fq_stem "$f")"
+            case "$RT_TAG" in
+                1) r1="${r1:+$r1,}$f" ;;
+                2) r2="${r2:+$r2,}$f" ;;
+                *) bare="${bare:+$bare,}$f" ;;
+            esac
         done
-        [ -n "$r1" ] || { echo "[WARN] $s holds no FASTQ - skipped" >&2; continue; }
+        # What a name with no read number means depends on the rest of the folder, so it is
+        # decided only now. On its own it is a single-end run. Beside a pair it is the unmated
+        # reads fasterq-dump --split-3 writes out, and concatenating those into R1 would leave
+        # R1 longer than R2 - cutadapt stops on that, hours in, with a read-count mismatch.
+        [ -n "$r1$r2$bare" ] || { echo "[WARN] $s holds no FASTQ - skipped" >&2; continue; }
+        if [ -z "$r1$r2" ]; then
+            r1="$bare"
+        elif [ -n "$bare" ]; then
+            aside=$((aside+1))
+            [ -z "${LIST_ONLY:-}" ] || echo "[WARN] $s: unmated reads not used: $bare" >&2
+        fi
+        # Only read 2 arrived. Saying the folder holds no FASTQ would be untrue and would drop
+        # the sample; the reads are there, and what is missing is their mates.
+        if [ -z "$r1" ]; then
+            echo "[WARN] $s: no R1 - its read 2 files are treated as single-end" >&2
+            r1="$r2"; r2=""
+        fi
         printf '%s\t%s\t%s\n' "$s" "$r1" "$r2"
     done
 
@@ -131,27 +172,57 @@ list_samples() {
     # printed, so an R2 finds its R1 whatever order the shell hands the globs over in.
     for f in "$GROUP_DIR"/*.fastq.gz "$GROUP_DIR"/*.fastq "$GROUP_DIR"/*.fq.gz "$GROUP_DIR"/*.fq; do
         [ -e "$f" ] || continue
-        if t="$(read_tag "$(fq_stem "$f")")"; then
-            id="${t%$'\t'*}"; tag="${t#*$'\t'}"
-        else
-            id="$(fq_stem "$f")"; tag=1
-        fi
-        if [ "$tag" = 2 ]; then R2_OF[$id]="$f"; else R1_OF[$id]="$f"; fi
-        [ -n "${SEEN[$id]:-}" ] || { SEEN[$id]=1; ORDER+=("$id"); }
+        read_tag "$(fq_stem "$f")"
+        [ -n "${R1_OF[$RT_ID]:-}${R2_OF[$RT_ID]:-}${BARE_OF[$RT_ID]:-}" ] || ORDER+=("$RT_ID")
+        # One file per sample per read. A second claimant of the same read - D_1.fastq.gz
+        # beside D_R1_001.fastq.gz - used to overwrite the first without a word, which loses a
+        # file exactly as silently as two samples sharing a .done marker, so it stops the run
+        # too. Refused in init_group rather than here, because a step reads this list through a
+        # process substitution where an exit is the subshell's and looks like no samples.
+        #
+        # A name with no read number is held aside instead: whether it is a sample of its own
+        # or the unmated half of a --split-3 trio depends on what else turns up.
+        case "$RT_TAG" in
+            1) if [ -n "${R1_OF[$RT_ID]:-}" ]; then
+                   claim_clash "$RT_ID read 1" "${R1_OF[$RT_ID]}" "$f"; rc=1
+               else R1_OF[$RT_ID]="$f"; fi ;;
+            2) if [ -n "${R2_OF[$RT_ID]:-}" ]; then
+                   claim_clash "$RT_ID read 2" "${R2_OF[$RT_ID]}" "$f"; rc=1
+               else R2_OF[$RT_ID]="$f"; fi ;;
+            *) if [ -n "${BARE_OF[$RT_ID]:-}" ]; then
+                   claim_clash "$RT_ID" "${BARE_OF[$RT_ID]}" "$f"; rc=1
+               else BARE_OF[$RT_ID]="$f"; fi ;;
+        esac
     done
 
     for id in ${ORDER[@]+"${ORDER[@]}"}; do
-        if [ -n "${R1_OF[$id]:-}" ]; then
-            printf '%s\t%s\t%s\n' "$id" "${R1_OF[$id]}" "${R2_OF[$id]:-}"
+        r1="${R1_OF[$id]:-}"; r2="${R2_OF[$id]:-}"
+        # SRR001_1, SRR001_2 and a bare SRR001 is one run, not two samples: --split-3 puts the
+        # reads whose mate is missing in the third file. They cannot go through cutadapt's
+        # paired mode with the rest and every paired-end analysis drops them, but reads going
+        # unused is worth a line rather than a silence.
+        if [ -n "$r1" ] && [ -n "${BARE_OF[$id]:-}" ]; then
+            aside=$((aside+1))
+            [ -z "${LIST_ONLY:-}" ] || echo "[WARN] $id: unmated reads not used: ${BARE_OF[$id]}" >&2
+        fi
+        [ -n "$r1" ] || r1="${BARE_OF[$id]:-}"
+        if [ -n "$r1" ]; then
+            printf '%s\t%s\t%s\n' "$id" "$r1" "$r2"
         else
             # Half a pair arrived. Said out loud and kept under its own file name rather than
             # dropped: a sample that simply vanishes from the list leaves nobody anything to
             # look for, and it was vanishing without a word.
-            s="$(fq_stem "${R2_OF[$id]}")"
+            s="$(fq_stem "$r2")"
             echo "[WARN] $s: no R1 mate found - treated as single-end" >&2
-            printf '%s\t%s\t\n' "$s" "${R2_OF[$id]}"
+            printf '%s\t%s\t\n' "$s" "$r2"
         fi
     done
+
+    # Every step calls this, so a line per sample would be the same forty lines eight times over
+    # in one group's log. The count survives that; the detail is what list_samples.sh is for.
+    [ "$aside" -eq 0 ] || [ -n "${LIST_ONLY:-}" ] ||
+        echo "[WARN] $aside sample(s) hold unmated reads that go unused - see: bash Scripts/list_samples.sh $GROUP_DIR" >&2
+    return "$rc"
 }
 
 is_done()   { [ -f "${1}/.${2}.done" ]; }

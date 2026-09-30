@@ -2,6 +2,9 @@
 
 **Takes raw sequencing files (FASTQ) and produces a gene-level expression table.**
 
+*Last updated 2026-09-30 — sample detection now reads the filenames a sequencing facility
+delivers, and refuses a group where two files claim one sample. `git log` has the rest.*
+
 Interpretation steps (differential expression, GO enrichment, and so on) are *not* here.
 Everything that comes *before* them is. Preprocessing is the same work in every project, so
 rather than rewriting it each time, every project uses this one repository.
@@ -327,7 +330,7 @@ often as you like.
 == disk ==
   [ OK ] 75826G free
 == self-check ==
-  [ OK ] logic 13/13
+  [ OK ] logic 17/17
 
 Ready. Next: put FASTQ under rawData/<project>/<group>/ and write group.conf (species).
 ```
@@ -335,7 +338,7 @@ Ready. Next: put FASTQ under rawData/<project>/<group>/ and write group.conf (sp
 Fix every `[MISS]` before going further. The point of this script is to keep you from
 **discovering at hour six of a STAR run that the reference genome was never there.**
 
-`[ OK ] logic 13/13` is the pipeline checking its own logic. It runs with no bioinformatics tool
+`[ OK ] logic 17/17` is the pipeline checking its own logic. It runs with no bioinformatics tool
 installed at all, so you can confirm the code is sound right after cloning.
 
 <details>
@@ -569,12 +572,8 @@ pairing any two names that differ by a 1 and a 2 would merge two people into one
 
 Everything before the read number is the sample name, dots included, so
 `Sample.L001_1.fastq.gz` and `Sample.L002_1.fastq.gz` are **two different samples**. To treat
-several lanes as one sample, put them in a folder named after it - that is what the folder form
-is for.
-
-Two files that resolve to the same sample name stop the run before any work is done, naming
-what collided. They would otherwise share one `.done` marker: the first would be processed, the
-rest skipped as already finished, and the group would report success having dropped them.
+several lanes as one sample, put them in a folder named after it. Two files that resolve to the
+same sample name stop the run before any work is done, naming what collided.
 
 **There is no sample sheet.** The directory structure is the single source of truth. A separate
 sheet silently produces wrong results the moment it disagrees with the files on disk.
@@ -588,6 +587,60 @@ bash Scripts/list_samples.sh rawData/ProjectA/GroupA
 Output is `sample <TAB> R1 <TAB> R2`. What you see there is exactly what will be processed. A
 sample missing from this list stays missing, so it is worth a look before starting a job that
 runs for hours.
+
+### Your own data in a project that started from public data
+
+A clone that has already run a public dataset is set up for your own FASTQ as well. Nothing is
+reinstalled and nothing is moved: a group is a folder, and the two kinds of group sit side by
+side under the same project.
+
+```bash
+mkdir -p rawData/ProjectA/InHouse
+cp /path/from/the/facility/*.fastq.gz rawData/ProjectA/InHouse/
+
+cat > rawData/ProjectA/InHouse/group.conf <<'CONF'
+species      = Homo_sapiens
+strandedness =
+adapter_kit  = Illumina_TruSeq
+CONF
+
+bash   Scripts/list_samples.sh rawData/ProjectA/InHouse     # look before spending hours
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/InHouse
+```
+
+Three things differ from the public route.
+
+**`PublicData_download.sh` has no part in it.** There is no accession list, and the script
+refuses a group without one. The files are already where they need to be.
+
+**You write `group.conf`.** For public data the download took the species out of runinfo; here
+nothing knows it, and `Alignment.sh` stops immediately without it. Leave `strandedness` empty
+either way - it is measured, not declared. `adapter_kit` matters only when the kit is not the
+default ([section 11](#11-adding-a-new-kit) covers a kit that is not in the list yet, and a
+facility that sends adapter sequences instead of a kit name).
+
+**There is no `metadata.tsv`.** Nothing writes one for your own data and nothing reads it.
+Which sample is which condition is yours to keep track of, and the sample names are the only
+record the pipeline itself carries into the count matrix, so they are worth choosing with that
+in mind.
+
+What carries over: the conda environment, the genome under `reference_Genomes/`, and the STAR
+index - the index only if the read length matches. A public 150 bp dataset and your own 100 bp
+one need `overhang149` and `overhang99`, which is two indexes, each built once and kept
+([section 2-3](#2-3-prepare-a-reference-genome)). A different species needs its genome
+downloaded first.
+
+Both kinds of group go in one command, and a group that stops for its strandedness does not hold
+up the rest:
+
+```bash
+sbatch Scripts/run_pipeline.sh rawData/ProjectA/GroupA rawData/ProjectA/InHouse
+```
+
+`list_samples.sh` is worth the habit here in particular. Public runs are named `SRR…` by the
+downloader, so their layout is never a surprise; your own files are named by whoever sequenced
+them, and that one line confirms the read numbers were understood and every sample is present
+before a job runs for hours.
 
 ---
 
@@ -1056,6 +1109,10 @@ backup material; delete them when disk runs short.
 | `run Trimming.sh first` | A step was skipped | Run the steps in order |
 | `produced no valid BAM` | STAR died, usually out of memory | Check the log. Index building needs 32 GB or more of RAM |
 | `[WARN] __no_feature 68.3%` | Wrong strandedness | Correct the value, delete `Processed/*/HTseqCount_result/.*.done`, re-run |
+| `more than one file resolves to each of these sample ids` | Two files, or a file and a folder, give the same sample name | Rename one, or put the runs of one sample in a folder named after it. `bash Scripts/list_samples.sh <group>` shows both |
+| `sample X read 1 is claimed by two files` | Two files in the group are both read 1 of sample `X`, e.g. `X_1.fastq.gz` beside `X_R1_001.fastq.gz`. The same is reported without a read number when two names differ only by extension | Keep one naming style in a group. Several files per read is legal only inside a merge folder, where they are runs to merge |
+| `[WARN] N sample(s) hold unmated reads that go unused` | `fasterq-dump --split-3` writes a third file for the reads whose mate is missing. They cannot go through paired trimming with the rest and are left out | Nothing, unless you want those reads. `bash Scripts/list_samples.sh <group>` names the files |
+| `[WARN] X: no R1 - its read 2 files are treated as single-end` | Only the read-2 half of a sample arrived | Check the transfer. It is processed single-end meanwhile, which is not the same data |
 
 **To force a re-run**, delete the `.done` markers of that step.
 
@@ -1125,7 +1182,8 @@ This exercises sample scanning, merge grouping, `group.conf` parsing, overhang c
 matrix assembly, probe interpretation, the refusal to start a download when a group has no
 accession list, a held group not stopping the groups after it, the deal across nodes, and the
 filenames a sequencing facility delivers - `_R1`/`_R2`, a trailing `_001`, dots in the sample
-name, half a pair, and a name that two files both claim. A stub scheduler stands in for SLURM,
+name, half a pair, a name that two files both claim, two files claiming one read of one sample,
+and the three files `fasterq-dump --split-3` leaves behind. A stub scheduler stands in for SLURM,
 so the node deal is checked on a machine that has none. **It runs with no bioinformatics tool installed**,
 so you can verify the code right after cloning, and use it as a regression check after editing
 a script.
